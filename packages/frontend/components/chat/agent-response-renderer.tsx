@@ -21,6 +21,19 @@ export function AgentResponseRenderer({ content }: AgentResponseRendererProps) {
       return <InteractiveTable data={content.content} />
 
     case "chart":
+      // Base64 이미지가 있으면 직접 표시
+      if (content.content.image_base64) {
+        return (
+          <div className="rounded-lg overflow-hidden border border-border bg-background">
+            <img 
+              src={`data:image/png;base64,${content.content.image_base64}`}
+              alt="Chart"
+              className="w-full h-auto"
+            />
+          </div>
+        )
+      }
+      // 기존 차트 데이터 형식
       return <InteractiveChart data={content.content} />
 
     case "text":

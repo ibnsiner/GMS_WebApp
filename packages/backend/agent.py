@@ -108,6 +108,9 @@ class GmisAgentV4:
         # 마지막 쿼리 결과 캐싱 (실제 데이터는 여기에)
         self.last_query_result = None
         
+        # 마지막 차트 데이터 캐싱 (파싱 시 사용)
+        self.last_chart_data = None
+        
         # 배치 테스트 모드 (기본: False)
         self._batch_test_mode = False
         
@@ -610,11 +613,12 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 "original_query": query
             }
     
-    def data_visualization(self, data: list = None, chart_type: str = 'bar', title: str = '', x_col: str = '', y_cols: list = None, company_filter: str = None, account_filter: str = None) -> dict:
+    def data_visualization(self, data: list = None, chart_type: str = 'bar', title: str = '', x_col: str = '', y_cols: list = None, company_filter: str = None, account_filter: str = None, return_base64: bool = True) -> dict:
         """
         차트 생성 및 PNG 저장 (필터링 기능 강화)
         - company_filter: 특정 회사 데이터만 필터링
         - account_filter: 특정 계정 데이터만 필터링
+        - return_base64: True면 base64 인코딩된 이미지 반환 (API용)
         """
         # Gemini Function Call에서 타입 변환
         if y_cols and not isinstance(y_cols, list):
@@ -666,11 +670,10 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 logging.error(error_msg)
                 return {"error": error_msg}
             
-            # [긴급 수정] 한글 폰트 설정 - 폰트 검색 최소화
+            # 한글 폰트 설정
             import platform
             system = platform.system()
             if system == 'Windows':
-                # 직접 폰트 파일 경로 지정 (검색 생략)
                 import matplotlib.font_manager as fm
                 font_path = 'C:\\Windows\\Fonts\\malgun.ttf'
                 font_prop = fm.FontProperties(fname=font_path)
@@ -682,40 +685,82 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             
             plt.rcParams['axes.unicode_minus'] = False
             
-            fig, ax = plt.subplots(figsize=(12, 7))
+            # 전문적인 차트 스타일 설정
+            plt.style.use('seaborn-v0_8-darkgrid' if 'seaborn-v0_8-darkgrid' in plt.style.available else 'default')
+            
+            fig, ax = plt.subplots(figsize=(14, 8), facecolor='white')
+            ax.set_facecolor('#f8f9fa')
+            
+            # 값을 억원 단위로 변환 (가독성 향상)
+            def convert_to_eok(value):
+                """값을 억원 단위로 변환"""
+                return value / 100000000 if pd.notna(value) else 0
+            
+            # 전문적인 색상 팔레트
+            colors = ['#2563eb', '#dc2626', '#16a34a', '#ca8a04', '#9333ea', '#0891b2']
             
             # [핵심 수정 2] y_cols를 동적으로 설정하여 여러 계정 그리기 지원
             if not y_cols or y_cols == ['v.value']:
                 # y_cols가 지정되지 않았으면, 필터링된 데이터의 모든 계정을 그림
                 if 'a.name' in df.columns and 'v.value' in df.columns:
                     unique_accounts = df['a.name'].unique()
-                    for account in unique_accounts:
-                        subset = df[df['a.name'] == account]
+                    for idx, account in enumerate(unique_accounts):
+                        subset = df[df['a.name'] == account].copy()
+                        subset['v.value_eok'] = subset['v.value'].apply(convert_to_eok)
+                        color = colors[idx % len(colors)]
+                        
                         if chart_type == 'line':
-                            ax.plot(subset[x_col], subset['v.value'], marker='o', label=account)
+                            ax.plot(subset[x_col], subset['v.value_eok'], 
+                                   marker='o', label=account, linewidth=2.5, 
+                                   markersize=8, color=color)
                         elif chart_type == 'bar':
-                            ax.bar(subset[x_col], subset['v.value'], label=account, alpha=0.7)
+                            ax.bar(subset[x_col], subset['v.value_eok'], 
+                                  label=account, alpha=0.85, color=color, edgecolor='white', linewidth=1.5)
                     if len(unique_accounts) > 1:
-                        ax.legend()
+                        ax.legend(fontsize=11, frameon=True, shadow=True, fancybox=True)
                 else:
                     # 기본 단순 차트
+                    df['v.value_eok'] = df['v.value'].apply(convert_to_eok)
                     if chart_type == 'line':
-                        ax.plot(df[x_col], df['v.value'], marker='o')
+                        ax.plot(df[x_col], df['v.value_eok'], marker='o', 
+                               linewidth=2.5, markersize=8, color=colors[0])
                     elif chart_type == 'bar':
-                        ax.bar(df[x_col], df['v.value'])
+                        ax.bar(df[x_col], df['v.value_eok'], 
+                              alpha=0.85, color=colors[0], edgecolor='white', linewidth=1.5)
             else:
                 # y_cols가 명시적으로 주어지면 기존 방식대로 그림
-                for y_col in y_cols:
+                for idx, y_col in enumerate(y_cols):
+                    color = colors[idx % len(colors)]
                     if chart_type == 'line':
-                        ax.plot(df[x_col], df[y_col], marker='o', label=y_col)
+                        ax.plot(df[x_col], df[y_col], marker='o', label=y_col,
+                               linewidth=2.5, markersize=8, color=color)
                     elif chart_type == 'bar':
-                        ax.bar(df[x_col], df[y_col], label=y_col)
+                        ax.bar(df[x_col], df[y_col], label=y_col, 
+                              alpha=0.85, color=color, edgecolor='white', linewidth=1.5)
                 if len(y_cols) > 1:
-                    ax.legend()
+                    ax.legend(fontsize=11, frameon=True, shadow=True, fancybox=True)
 
-            ax.set_title(title, fontsize=16)
-            ax.set_xlabel(x_col, fontsize=12)
-            ax.grid(True, alpha=0.3)
+            # 차트 스타일링
+            ax.set_title(title, fontsize=18, fontweight='bold', pad=20)
+            ax.set_xlabel('월' if x_col == 'p.month' else x_col, fontsize=13, fontweight='600')
+            ax.set_ylabel('금액 (억원)', fontsize=13, fontweight='600')
+            
+            # 그리드 스타일링
+            ax.grid(True, alpha=0.2, linestyle='--', linewidth=0.8, color='gray')
+            ax.set_axisbelow(True)
+            
+            # 축 스타일링
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_color('#cccccc')
+            ax.spines['bottom'].set_color('#cccccc')
+            
+            # Y축 포맷팅 (천 단위 구분 쉼표)
+            from matplotlib.ticker import FuncFormatter
+            def format_with_comma(x, p):
+                return f'{int(x):,}'
+            ax.yaxis.set_major_formatter(FuncFormatter(format_with_comma))
+            
             plt.tight_layout()
             
             # [개선2] 통합 경로 사용
@@ -728,10 +773,20 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             
             logging.info(f"차트 저장 완료: {filename}")
             
-            return {
+            result = {
                 "status": "success",
                 "file_path": os.path.abspath(filepath)
             }
+            
+            # API 호출 시 base64 인코딩된 이미지도 함께 반환
+            if return_base64:
+                import base64
+                with open(filepath, 'rb') as img_file:
+                    img_base64 = base64.b64encode(img_file.read()).decode('utf-8')
+                    result["image_base64"] = img_base64
+                    logging.info("차트 이미지를 base64로 인코딩 완료")
+            
+            return result
         except Exception as e:
             logging.error(f"차트 생성 오류: {e}")
             import traceback
@@ -831,6 +886,26 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
         import re
         
         content_blocks = []
+        
+        # 0. 차트가 생성되었는지 확인 (최우선)
+        if self.last_chart_data and self.last_chart_data.get('image_base64'):
+            if "차트" in final_answer or "그래프" in final_answer:
+                content_blocks.append({
+                    "type": "chart",
+                    "content": {
+                        "image_base64": self.last_chart_data['image_base64'],
+                        "file_path": self.last_chart_data.get('file_path', '')
+                    }
+                })
+                # 차트 포함 시 간단한 텍스트만 추가
+                simple_text = re.sub(r'파일 경로:.*', '', final_answer).strip()
+                if simple_text:
+                    content_blocks.append({"type": "text", "content": simple_text})
+                
+                # 차트 데이터 초기화 (재사용 방지)
+                self.last_chart_data = None
+                
+                return content_blocks
         
         # 1. 요약 (### 1. 요약)
         summary_match = re.search(r"###\s*1\.\s*요약\s*\n(.*?)(?=\n###|\Z)", final_answer, re.DOTALL)
@@ -1567,14 +1642,22 @@ Remember:
                         result = self.data_visualization(**tool_args)
                         if result.get("status") == "success":
                             file_path = result['file_path']
+                            image_base64 = result.get('image_base64')
                             print(f"[완료] 차트 저장: {file_path}\n")
+                            
+                            # 차트 정보를 캐시에 저장 (파싱 시 사용)
+                            self.last_chart_data = {
+                                "file_path": file_path,
+                                "image_base64": image_base64
+                            }
+                            
                             # 간결한 확인 메시지만 요청
                             current_prompt = f"""The data_visualization tool successfully created a chart.
-File path: {file_path}
 
-Your ONLY job now is to inform the user that the chart has been created and provide the file path.
-Do NOT generate a 4-part report. Just a simple, friendly confirmation message.
-Example: "요청하신 차트를 생성했습니다. 파일 경로: {file_path}"
+Your ONLY job now is to inform the user that the chart has been created.
+Just say: "요청하신 차트를 생성했습니다."
+
+Keep it simple and short.
 """
                             continue
                         else:
