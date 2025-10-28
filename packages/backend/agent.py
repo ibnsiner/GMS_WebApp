@@ -843,18 +843,14 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             table_md = table_match.group(1).strip()
             lines = [line.strip() for line in table_md.split('\n') if line.strip()]
             if len(lines) >= 2 and '|' in lines[0] and '---' in lines[1]:
-                headers = [h.strip() for h in lines[0].strip('|').split('|')]
+                columns = [h.strip() for h in lines[0].strip('|').split('|')]
                 rows = []
                 for line in lines[2:]:
                     rows.append([r.strip() for r in line.strip('|').split('|')])
                 
-                # title 추출 (괄호 안의 정보가 있으면 사용)
-                title_match = re.search(r"\((.*?)\)", lines[0])
-                title = title_match.group(1) if title_match else "집계 데이터"
-                
                 content_blocks.append({
                     "type": "table", 
-                    "content": {"title": title, "headers": headers, "rows": rows}
+                    "content": {"columns": columns, "rows": rows}
                 })
 
         # 3. 월별 상세 (### 3. 월별 상세) - 테이블로 파싱
@@ -863,14 +859,14 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             details_md = details_match.group(1).strip()
             lines = [line.strip() for line in details_md.split('\n') if line.strip()]
             if len(lines) >= 2 and '|' in lines[0] and '---' in lines[1]:
-                headers = [h.strip() for h in lines[0].strip('|').split('|')]
+                columns = [h.strip() for h in lines[0].strip('|').split('|')]
                 rows = []
                 for line in lines[2:]:
                     rows.append([r.strip() for r in line.strip('|').split('|')])
                 
                 content_blocks.append({
                     "type": "table",
-                    "content": {"title": "월별 상세", "headers": headers, "rows": rows}
+                    "content": {"columns": columns, "rows": rows}
                 })
             else:
                 # 테이블 형식이 아니면 텍스트로 추가
