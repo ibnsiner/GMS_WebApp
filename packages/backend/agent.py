@@ -923,13 +923,14 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 final_answer = output.strip()
             
             # 디버그/품질 경고 메시지 제거 (사용자에게 보이지 않아야 함)
+            # 줄의 시작 부분에 있는 경우만 제거 (^ 사용)
             debug_patterns = [
-                r'\[품질 경고\].*?\n',
-                r'\[DEBUG\].*?\n',
-                r'\[경고\].*?\n',
-                r'\[힌트\].*?\n',
-                r'\[작업\].*?\n',
-                r'\[사고\].*?\n'
+                r'^\[품질 경고\].*?$',
+                r'^\[DEBUG\].*?$',
+                r'^\[경고\].*?$',
+                r'^\[힌트\].*?$',
+                r'^\[작업\].*?$',
+                r'^\[사고\].*?$'
             ]
             import re
             for pattern in debug_patterns:
@@ -937,6 +938,9 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             
             # 연속된 빈 줄 정리
             final_answer = re.sub(r'\n\n\n+', '\n\n', final_answer).strip()
+            
+            # API 응답 로깅 (디버깅용)
+            logging.info(f"최종 답변 (파싱 전): {final_answer[:500]}...")  # 처음 500자만
                 
         except Exception as e:
             logging.error(f"run_and_get_structured_output 오류: {e}", exc_info=True)
@@ -947,6 +951,11 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
         
         # 마크다운 답변을 구조화된 형태로 파싱
         structured_content = self._parse_final_answer_to_structured_format(final_answer)
+        
+        # 파싱 결과 로깅
+        logging.info(f"파싱된 컨텐츠 블록 수: {len(structured_content)}")
+        for i, block in enumerate(structured_content):
+            logging.info(f"블록 {i}: type={block['type']}, content_length={len(str(block['content']))}")
         
         return structured_content
     
