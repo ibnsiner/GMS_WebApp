@@ -19,8 +19,7 @@ if not exist "packages\backend" (
 
 :: 1. 백엔드 전용 Python 가상환경 확인 및 활성화
 if not exist "packages\backend\venv\Scripts\activate.bat" (
-    echo WARNING: Virtual environment not found!
-    echo Creating virtual environment...
+    echo Virtual environment not found. Creating new environment...
     cd packages\backend
     python -m venv venv
     if errorlevel 1 (
@@ -38,6 +37,18 @@ if not exist "packages\backend\venv\Scripts\activate.bat" (
         cd ..\..
         pause
         exit /b 1
+    )
+    echo Dependencies installed successfully.
+    cd ..\..
+) else (
+    echo Virtual environment found. Checking for missing dependencies...
+    call packages\backend\venv\Scripts\activate.bat
+    cd packages\backend
+    pip install -r requirements.txt --quiet
+    if errorlevel 1 (
+        echo WARNING: Some dependencies may have failed to install.
+    ) else (
+        echo Dependencies verified.
     )
     cd ..\..
 )

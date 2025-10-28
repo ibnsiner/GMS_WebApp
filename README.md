@@ -20,22 +20,59 @@ GMS_WebApp/
 
 ## 🚀 시작하기
 
-### Backend 설정
+### ⚡ 빠른 시작 (권장)
+
+**처음 프로젝트를 클론한 경우 또는 완전히 새로 설치:**
+
+```bash
+# 1. 저장소 클론
+git clone https://github.com/ibnsiner/GMS_WebApp.git
+cd GMS_WebApp
+
+# 2. 초기 설정 (최초 1회만, 3-5분 소요)
+setup.bat
+```
+
+**개발 서버 실행 (매일 사용):**
+
+```bash
+# 백엔드 + 프론트엔드 동시 실행 (권장)
+run_dev_servers.bat
+
+# 또는 개별 실행
+run_backend.bat    # 백엔드만
+run_frontend.bat   # 프론트엔드만
+```
+
+서버가 시작되면:
+- **프론트엔드**: http://localhost:3000
+- **백엔드 API**: http://localhost:8000
+
+### 📋 사전 요구사항
+
+- **Python 3.10 이상**
+- **Node.js 18 이상**
+- **Neo4j Database** (실행 중이어야 함)
+- **Git**
+
+### 🛠️ 수동 설정 (선택사항)
+
+#### Backend
 
 ```bash
 cd packages/backend
 python -m venv venv
 venv\Scripts\activate  # Windows
 pip install -r requirements.txt
-python main_api.py
+uvicorn main_api:app --reload
 ```
 
-### Frontend 설정
+#### Frontend
 
 ```bash
 cd packages/frontend
-pnpm install
-pnpm dev
+npm install
+npm run dev
 ```
 
 ## 📚 문서

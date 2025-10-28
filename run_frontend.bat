@@ -22,10 +22,9 @@ cd packages\frontend
 echo Current directory: %CD%
 echo.
 
-:: node_modules 확인
+:: node_modules 확인 및 의존성 설치
 if not exist "node_modules" (
-    echo WARNING: node_modules not found!
-    echo Installing dependencies...
+    echo node_modules not found. Installing all dependencies...
     call npm install
     if errorlevel 1 (
         echo ERROR: npm install failed!
@@ -33,6 +32,16 @@ if not exist "node_modules" (
         pause
         exit /b 1
     )
+) else (
+    echo node_modules found. Checking for missing dependencies...
+    call npm install
+    if errorlevel 1 (
+        echo ERROR: npm install failed!
+        cd ..\..
+        pause
+        exit /b 1
+    )
+    echo Dependencies verified.
 )
 
 :: 2. Next.js 개발 서버 실행 (npm)
