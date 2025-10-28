@@ -4,12 +4,12 @@ import { useState } from "react"
 import { LeftSidebar } from "@/components/sidebar/left-sidebar"
 import { RightSidebar } from "@/components/sidebar/right-sidebar"
 import { ChatArea } from "@/components/chat/chat-area"
-import { mockChatHistory } from "@/lib/mock-data"
-import type { ChatMessage } from "@/lib/types"
+import type { ChatMessage, ChatSession } from "@/lib/types"
 
 export default function Home() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [sessions, setSessions] = useState<ChatSession[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false)
 
@@ -55,7 +55,21 @@ export default function Home() {
       
       // 응답에서 sessionId 추출하여 상태 업데이트
       if (agentResponse.sessionId) {
-        setActiveSessionId(agentResponse.sessionId)
+        const newSessionId = agentResponse.sessionId
+        setActiveSessionId(newSessionId)
+        
+        // 새 세션이면 세션 목록에 추가
+        if (!activeSessionId) {
+          const newSession: ChatSession = {
+            id: newSessionId,
+            title: content.slice(0, 30) + (content.length > 30 ? '...' : ''),
+            last_updated: new Date().toLocaleTimeString('ko-KR', {
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          }
+          setSessions((prev) => [newSession, ...prev])
+        }
       }
 
       // 화면에 에이전트 메시지 추가
@@ -83,7 +97,7 @@ export default function Home() {
   return (
     <div className="flex h-screen overflow-hidden">
       <LeftSidebar
-        sessions={mockChatHistory}
+        sessions={sessions}
         activeSessionId={activeSessionId}
         onNewChat={handleNewChat}
         onSelectSession={handleSelectSession}
