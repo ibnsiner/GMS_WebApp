@@ -949,13 +949,24 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             # 표준 출력 복원
             sys.stdout = old_stdout
         
-        # [임시] 파싱 없이 전체 답변을 텍스트로 반환
-        # TODO: 파싱 로직 개선 필요
-        structured_content = [{"type": "text", "content": final_answer}]
-        
-        logging.info(f"답변 길이: {len(final_answer)}자")
-        
-        return structured_content
+        # 마크다운 답변을 구조화된 형태로 파싱 시도
+        try:
+            structured_content = self._parse_final_answer_to_structured_format(final_answer)
+            
+            # 파싱 결과 로깅
+            logging.info(f"파싱된 컨텐츠 블록 수: {len(structured_content)}")
+            
+            # 파싱 결과가 하나의 텍스트 블록뿐이고, 원본에 테이블이 있다면 파싱 실패로 간주
+            if len(structured_content) == 1 and structured_content[0]['type'] == 'text':
+                if '|' in final_answer and '---' in final_answer and '###' in final_answer:
+                    logging.warning("테이블이 포함된 답변이지만 파싱 실패. 전체를 텍스트로 반환합니다.")
+            
+            return structured_content
+            
+        except Exception as parse_error:
+            # 파싱 실패 시 전체 답변을 텍스트로 반환
+            logging.error(f"파싱 실패: {parse_error}. 전체 답변을 텍스트로 반환합니다.")
+            return [{"type": "text", "content": final_answer}]
     
     def _determine_level(self, user_query):
         """LLM을 활용한 전사 vs 사업별 레벨 판단 (개선)"""
