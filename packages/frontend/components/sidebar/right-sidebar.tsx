@@ -1,14 +1,29 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { KnowledgeMenu } from "./knowledge-menu"
 import type { KnowledgeMenuData } from "@/lib/types"
 import { Database, Info } from "lucide-react"
 
-interface RightSidebarProps {
-  menuData: KnowledgeMenuData | null
-}
+export function RightSidebar() {
+  const [menuData, setMenuData] = useState<KnowledgeMenuData | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
 
-export function RightSidebar({ menuData }: RightSidebarProps) {
+  useEffect(() => {
+    async function fetchMenuData() {
+      setIsLoading(true)
+      try {
+        const response = await fetch('http://localhost:8000/api/knowledge-menu')
+        const data = await response.json()
+        setMenuData(data)
+      } catch (error) {
+        console.error("Failed to fetch knowledge menu:", error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    fetchMenuData()
+  }, [])
   return (
     <aside className="w-80 border-l border-border bg-sidebar flex flex-col h-screen overflow-y-auto">
       <div className="p-4 border-b border-border min-h-[120px] flex flex-col justify-center">

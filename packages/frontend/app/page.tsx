@@ -4,15 +4,14 @@ import { useState } from "react"
 import { LeftSidebar } from "@/components/sidebar/left-sidebar"
 import { RightSidebar } from "@/components/sidebar/right-sidebar"
 import { ChatArea } from "@/components/chat/chat-area"
-import { mockKnowledgeMenu, mockChatHistory, mockMessages } from "@/lib/mock-data"
+import { mockChatHistory } from "@/lib/mock-data"
 import type { ChatMessage } from "@/lib/types"
 
 export default function Home() {
-  const [activeSessionId, setActiveSessionId] = useState<string | null>("session-1")
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = useState(false)
-  // </CHANGE>
 
   const handleNewChat = () => {
     setActiveSessionId(null)
@@ -21,44 +20,64 @@ export default function Home() {
 
   const handleSelectSession = (sessionId: string) => {
     setActiveSessionId(sessionId)
-    // In a real app, load messages for this session
-    setMessages(mockMessages)
+    // TODO: 향후 세션별 메시지 로드 기능 추가
+    setMessages([])
   }
 
-  const handleSendMessage = (content: string) => {
-    const newMessage: ChatMessage = {
-      id: `msg-${Date.now()}`,
+  const handleSendMessage = async (content: string) => {
+    if (!content.trim() || isLoading) return
+
+    // 사용자 메시지 추가
+    const userMessage: ChatMessage = {
+      id: `msg-user-${Date.now()}`,
       author: "user",
       content: [{ type: "text", content }],
-      timestamp: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
+      timestamp: new Date().toISOString(),
     }
-
-    setMessages((prev) => [...prev, newMessage])
+    setMessages((prev) => [...prev, userMessage])
     setIsLoading(true)
 
-    // Simulate API response
-    setTimeout(() => {
-      const agentResponse: ChatMessage = {
-        id: `msg-${Date.now()}`,
-        author: "agent",
-        content: [
-          {
-            type: "summary",
-            content: "쿼리를 분석했습니다. 사용 가능한 데이터를 기반으로 찾은 내용은 다음과 같습니다.",
-          },
-        ],
-        timestamp: new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
+    try {
+      const response = await fetch('http://localhost:8000/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          sessionId: activeSessionId, 
+          query: content 
         }),
+      })
+
+      if (!response.ok) {
+        throw new Error('API request failed')
       }
 
+      const agentResponse = await response.json()
+      
+      // 응답에서 sessionId 추출하여 상태 업데이트
+      if (agentResponse.sessionId) {
+        setActiveSessionId(agentResponse.sessionId)
+      }
+
+      // 화면에 에이전트 메시지 추가
       setMessages((prev) => [...prev, agentResponse])
+
+    } catch (error) {
+      console.error('Error:', error)
+      
+      // 오류 메시지 표시
+      const errorMessage: ChatMessage = {
+        id: `msg-error-${Date.now()}`,
+        author: "agent",
+        content: [{ 
+          type: "text", 
+          content: "죄송합니다, 오류가 발생했습니다. 다시 시도해주세요." 
+        }],
+        timestamp: new Date().toISOString(),
+      }
+      setMessages((prev) => [...prev, errorMessage])
+    } finally {
       setIsLoading(false)
-    }, 1500)
+    }
   }
 
   return (
@@ -71,9 +90,8 @@ export default function Home() {
         isCollapsed={isLeftSidebarCollapsed}
         onToggleCollapse={() => setIsLeftSidebarCollapsed(!isLeftSidebarCollapsed)}
       />
-      {/* </CHANGE> */}
       <ChatArea messages={messages} onSendMessage={handleSendMessage} isLoading={isLoading} />
-      <RightSidebar menuData={mockKnowledgeMenu} />
+      <RightSidebar />
     </div>
   )
 }

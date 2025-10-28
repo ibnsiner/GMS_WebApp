@@ -48,7 +48,7 @@ class GmisAgentV4:
     """
     
     def __init__(self, 
-                 config_path='config_v11.json',
+                 config_path='config.json',
                  db_uri="bolt://127.0.0.1:7687",
                  db_user="neo4j",
                  db_pass="vlvmffoq1!",
@@ -823,6 +823,120 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             traceback.print_exc()
             
             return f"죄송합니다. 지식 제공 중 오류가 발생했습니다.\n오류: {type(e).__name__}\n질문을 다시 시도해주세요."
+    
+    def _parse_final_answer_to_structured_format(self, final_answer: str):
+        """
+        최종 마크다운 답변을 프론트엔드가 요구하는 JSON 구조로 파싱합니다.
+        """
+        import re
+        
+        content_blocks = []
+        
+        # 1. 요약 (### 1. 요약)
+        summary_match = re.search(r"###\s*1\.\s*요약\s*\n(.*?)(?=\n###|\Z)", final_answer, re.DOTALL)
+        if summary_match:
+            content_blocks.append({"type": "text", "content": summary_match.group(1).strip()})
+
+        # 2. 집계 데이터 (### 2. 집계 데이터) - 테이블 파싱
+        table_match = re.search(r"###\s*2\.\s*집계 데이터\s*\n(.*?)(?=\n###|\Z)", final_answer, re.DOTALL)
+        if table_match:
+            table_md = table_match.group(1).strip()
+            lines = [line.strip() for line in table_md.split('\n') if line.strip()]
+            if len(lines) >= 2 and '|' in lines[0] and '---' in lines[1]:
+                headers = [h.strip() for h in lines[0].strip('|').split('|')]
+                rows = []
+                for line in lines[2:]:
+                    rows.append([r.strip() for r in line.strip('|').split('|')])
+                
+                # title 추출 (괄호 안의 정보가 있으면 사용)
+                title_match = re.search(r"\((.*?)\)", lines[0])
+                title = title_match.group(1) if title_match else "집계 데이터"
+                
+                content_blocks.append({
+                    "type": "table", 
+                    "content": {"title": title, "headers": headers, "rows": rows}
+                })
+
+        # 3. 월별 상세 (### 3. 월별 상세) - 테이블로 파싱
+        details_match = re.search(r"###\s*3\.\s*월별\s+(?:상세|비교|데이터).*?\n(.*?)(?=\n###|\Z)", final_answer, re.DOTALL)
+        if details_match:
+            details_md = details_match.group(1).strip()
+            lines = [line.strip() for line in details_md.split('\n') if line.strip()]
+            if len(lines) >= 2 and '|' in lines[0] and '---' in lines[1]:
+                headers = [h.strip() for h in lines[0].strip('|').split('|')]
+                rows = []
+                for line in lines[2:]:
+                    rows.append([r.strip() for r in line.strip('|').split('|')])
+                
+                content_blocks.append({
+                    "type": "table",
+                    "content": {"title": "월별 상세", "headers": headers, "rows": rows}
+                })
+            else:
+                # 테이블 형식이 아니면 텍스트로 추가
+                content_blocks.append({"type": "text", "content": f"### 3. 월별 상세\n{details_md}"})
+
+        # 4. 인사이트 (### 4. 인사이트)
+        insight_match = re.search(r"###\s*4\.\s*인사이트\s*\n(.*?)(?=\n💡|\Z)", final_answer, re.DOTALL)
+        if insight_match:
+            content_blocks.append({"type": "text", "content": insight_match.group(1).strip()})
+
+        # 5. 안내 메시지 (💡로 시작)
+        notice_match = re.search(r"(💡.*?)(?=\n\n|\Z)", final_answer, re.DOTALL)
+        if notice_match:
+            content_blocks.append({"type": "notice", "content": notice_match.group(1).strip()})
+        
+        # 파싱된 블록이 없으면, 전체 답변을 단일 텍스트 블록으로 반환
+        if not content_blocks:
+            return [{"type": "text", "content": final_answer}]
+            
+        return content_blocks
+    
+    def run_and_get_structured_output(self, user_query: str):
+        """
+        API용 실행 메서드 - 구조화된 JSON 반환
+        기존 run() 메서드를 호출하되, 출력을 캡처하여 구조화된 형태로 반환합니다.
+        """
+        import io
+        import sys
+        
+        # 표준 출력 캡처 준비
+        old_stdout = sys.stdout
+        sys.stdout = captured_output = io.StringIO()
+        
+        final_answer = None
+        
+        try:
+            # 기존 run() 메서드의 로직을 재사용
+            # run() 내부에서 최종 답변이 출력되므로 이를 캡처합니다
+            
+            # run() 메서드 실행
+            self.run(user_query)
+            
+            # 출력된 내용 가져오기
+            output = captured_output.getvalue()
+            
+            # [GMIS Agent v4] 이후의 내용을 최종 답변으로 추출
+            if "[GMIS Agent v4]" in output:
+                parts = output.split("[GMIS Agent v4]")
+                if len(parts) > 1:
+                    final_answer = parts[-1].strip()
+            
+            # 최종 답변이 없으면 전체 출력 사용
+            if not final_answer:
+                final_answer = output.strip()
+                
+        except Exception as e:
+            logging.error(f"run_and_get_structured_output 오류: {e}", exc_info=True)
+            final_answer = f"죄송합니다. 질문 처리 중 오류가 발생했습니다: {str(e)}"
+        finally:
+            # 표준 출력 복원
+            sys.stdout = old_stdout
+        
+        # 마크다운 답변을 구조화된 형태로 파싱
+        structured_content = self._parse_final_answer_to_structured_format(final_answer)
+        
+        return structured_content
     
     def _determine_level(self, user_query):
         """LLM을 활용한 전사 vs 사업별 레벨 판단 (개선)"""

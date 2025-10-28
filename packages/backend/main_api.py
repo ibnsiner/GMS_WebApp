@@ -54,15 +54,26 @@ def get_knowledge_menu():
 
 @app.post("/api/chat")
 async def handle_chat(request: ChatRequest):
-    # 이 부분은 추후 Agent 로직과 연동하여 완성합니다.
-    session_id = request.sessionId or str(uuid.uuid4())
+    session_id = request.sessionId
     
-    # 임시 응답 (향후 실제 Agent 로직으로 교체)
+    # 세션이 없거나 agents 딕셔너리에 없으면 새로 생성
+    if not session_id or session_id not in agents:
+        session_id = str(uuid.uuid4())
+        agents[session_id] = GmisAgentV4(session_id=session_id)
+        print(f"새로운 세션 시작: {session_id}")
+
+    agent = agents[session_id]
+    
+    # Agent의 구조화된 출력 메서드 호출
+    agent_response_content = agent.run_and_get_structured_output(request.query)
+
+    # 프론트엔드 타입에 맞게 응답 반환
     return {
         "id": f"msg-agent-{uuid.uuid4()}",
-        "role": "assistant",
-        "content": [{"type": "text", "content": f"Received query for session {session_id}: {request.query}"}],
-        "timestamp": datetime.utcnow().isoformat() + "Z"
+        "author": "agent",  # 프론트엔드 타입과 일치
+        "content": agent_response_content,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "sessionId": session_id  # 세션 ID를 프론트엔드에 전달
     }
 
 if __name__ == "__main__":
