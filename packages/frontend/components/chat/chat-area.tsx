@@ -17,7 +17,7 @@ export function ChatArea({ messages, onSendMessage, isLoading = false }: ChatAre
   return (
     <div className="flex-1 flex flex-col h-screen bg-muted/30">
       {showHeader && <ChatHeader />}
-      <MessageStream messages={messages} />
+      <MessageStream messages={messages} isLoading={isLoading} />
       <ChatInput onSend={onSendMessage} disabled={isLoading} />
     </div>
   )
