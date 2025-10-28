@@ -17,9 +17,9 @@ export function MessageStream({ messages, isLoading = false }: MessageStreamProp
         <div className="h-full" />
       ) : (
         <>
-          {messages.map((message) => (
-          <div key={message.id} className={cn("flex", message.author === "user" ? "justify-end" : "justify-start")}>
-            <div className={cn("max-w-3xl w-full", message.author === "user" && "flex justify-end")}>
+          {        messages.map((message) => (
+          <div key={message.id} className={cn("flex", message.author === "user" ? "justify-end px-8" : "justify-start px-8")}>
+            <div className={cn("w-full", message.author === "user" ? "max-w-3xl flex justify-end" : "max-w-5xl")}>
               {message.author === "user" ? (
                 <div className="inline-block max-w-2xl">
                   <div className="bg-primary text-primary-foreground rounded-lg px-4 py-3">
@@ -31,12 +31,12 @@ export function MessageStream({ messages, isLoading = false }: MessageStreamProp
                 </div>
               ) : (
                 <div className="w-full space-y-4">
-                  <div className="pl-4 space-y-4">
+                  <div className="space-y-4">
                     {message.content.map((content, idx) => (
                       <AgentResponseRenderer key={idx} content={content} />
                     ))}
                   </div>
-                  <div className="text-xs text-muted-foreground pl-4 mt-2">
+                  <div className="text-xs text-muted-foreground mt-2">
                     {message.timestamp}
                   </div>
                 </div>
@@ -46,8 +46,8 @@ export function MessageStream({ messages, isLoading = false }: MessageStreamProp
           ))}
           
           {isLoading && (
-            <div className="flex justify-start">
-              <div className="max-w-3xl w-full pl-4">
+            <div className="flex justify-start px-8">
+              <div className="max-w-5xl w-full">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   <span className="animate-pulse">AI가 생각하고 있습니다...</span>
