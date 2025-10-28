@@ -32,21 +32,62 @@ def parse_config_for_menu():
     with open('config.json', 'r', encoding='utf-8') as f:
         config = json.load(f)
     
+    # Company items
     companies = [
-        {"id": cid, "name": cdata["official_name"], "description": ""} 
+        {"id": cid, "name": cdata["official_name"]} 
         for cid, cdata in config["entities"]["companies"].items() if cdata.get("type") != "CIC"
     ]
     
-    financial_accounts = [
-        {"id": aid, "name": adata["aliases"][0] if adata.get("aliases") else adata["official_name"], "category": adata["category"], "description": adata.get("description", "")}
-        for aid, adata in config["entities"]["accounts"].items()
+    # Group financial accounts by category
+    accounts_by_category = {}
+    for aid, adata in config["entities"]["accounts"].items():
+        category = adata.get("category", "기타")
+        category_name_map = {
+            "IS": "손익계산서 (IS)",
+            "BS": "재무상태표 (BS)",
+            "KPI": "관리지표",
+            "EXTERNAL_FACTOR": "외부요인",
+            "ETC": "기타"
+        }
+        category_display = category_name_map.get(category, category)
+        
+        if category_display not in accounts_by_category:
+            accounts_by_category[category_display] = []
+        
+        accounts_by_category[category_display].append({
+            "id": aid,
+            "name": adata["aliases"][0] if adata.get("aliases") else adata["official_name"]
+        })
+    
+    # Build financial accounts as sub-categories
+    financial_account_items = [
+        {
+            "name": category_name,
+            "sub_items": items
+        }
+        for category_name, items in accounts_by_category.items()
+    ]
+    
+    # Build menu structure matching frontend types
+    menu = [
+        {
+            "category": "회사",
+            "type": "company",
+            "items": companies
+        },
+        {
+            "category": "재무계정",
+            "type": "account",
+            "items": financial_account_items
+        },
+        {
+            "category": "사업",
+            "type": "segment",
+            "items": []
+        }
     ]
 
-    return {
-        "companies": companies,
-        "financialAccounts": financial_accounts,
-        "businessSegments": []
-    }
+    return {"menu": menu}
 
 @app.get("/api/knowledge-menu")
 def get_knowledge_menu():
