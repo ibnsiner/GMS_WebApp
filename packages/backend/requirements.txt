@@ -1,0 +1,11 @@
+# GMS_WebApp/packages/backend/requirements.txt
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+# --- 기존 agent.py에 필요한 라이브러리 추가 ---
+neo4j
+pandas
+matplotlib
+google-generativeai
+
