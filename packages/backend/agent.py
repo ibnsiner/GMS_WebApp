@@ -670,20 +670,32 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 logging.error(error_msg)
                 return {"error": error_msg}
             
-            # 한글 폰트 설정
+            # 한글 폰트 설정 (개선)
             import platform
+            import matplotlib.font_manager as fm
+            
             system = platform.system()
             if system == 'Windows':
-                import matplotlib.font_manager as fm
+                # Windows: 맑은 고딕 폰트 사용
                 font_path = 'C:\\Windows\\Fonts\\malgun.ttf'
-                font_prop = fm.FontProperties(fname=font_path)
-                plt.rcParams['font.family'] = font_prop.get_name()
+                if os.path.exists(font_path):
+                    font_prop = fm.FontProperties(fname=font_path)
+                    plt.rcParams['font.family'] = font_prop.get_name()
+                else:
+                    # 맑은 고딕이 없으면 굴림 시도
+                    plt.rcParams['font.family'] = 'Malgun Gothic'
             elif system == 'Darwin':
                 plt.rcParams['font.family'] = 'AppleGothic'
             else:
                 plt.rcParams['font.family'] = 'DejaVu Sans'
             
             plt.rcParams['axes.unicode_minus'] = False
+            
+            # 폰트 캐시 재빌드 (한 번만)
+            try:
+                fm._load_fontmanager(try_read_cache=False)
+            except:
+                pass
             
             # 전문적인 차트 스타일 설정
             plt.style.use('seaborn-v0_8-darkgrid' if 'seaborn-v0_8-darkgrid' in plt.style.available else 'default')
@@ -740,10 +752,10 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 if len(y_cols) > 1:
                     ax.legend(fontsize=11, frameon=True, shadow=True, fancybox=True)
 
-            # 차트 스타일링
+            # 차트 스타일링 (영문 우선, 한글은 제목만)
             ax.set_title(title, fontsize=18, fontweight='bold', pad=20)
-            ax.set_xlabel('월' if x_col == 'p.month' else x_col, fontsize=13, fontweight='600')
-            ax.set_ylabel('금액 (억원)', fontsize=13, fontweight='600')
+            ax.set_xlabel('Month' if x_col == 'p.month' else x_col, fontsize=13, fontweight='600')
+            ax.set_ylabel('Amount (100M KRW)', fontsize=13, fontweight='600')
             
             # 그리드 스타일링
             ax.grid(True, alpha=0.2, linestyle='--', linewidth=0.8, color='gray')
