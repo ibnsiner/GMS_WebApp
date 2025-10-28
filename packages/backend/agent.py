@@ -921,6 +921,22 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             # 최종 답변이 없으면 전체 출력 사용
             if not final_answer:
                 final_answer = output.strip()
+            
+            # 디버그/품질 경고 메시지 제거 (사용자에게 보이지 않아야 함)
+            debug_patterns = [
+                r'\[품질 경고\].*?\n',
+                r'\[DEBUG\].*?\n',
+                r'\[경고\].*?\n',
+                r'\[힌트\].*?\n',
+                r'\[작업\].*?\n',
+                r'\[사고\].*?\n'
+            ]
+            import re
+            for pattern in debug_patterns:
+                final_answer = re.sub(pattern, '', final_answer, flags=re.MULTILINE)
+            
+            # 연속된 빈 줄 정리
+            final_answer = re.sub(r'\n\n\n+', '\n\n', final_answer).strip()
                 
         except Exception as e:
             logging.error(f"run_and_get_structured_output 오류: {e}", exc_info=True)
