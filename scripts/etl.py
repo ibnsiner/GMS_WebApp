@@ -13,7 +13,7 @@ NEO4J_URI = "bolt://127.0.0.1:7687"
 NEO4J_USER = "neo4j"
 NEO4J_PASSWORD = "vlvmffoq1!"
 DATA_DIR = "data"
-CONFIG_FILE = "config_v11.json"
+CONFIG_FILE = "packages/backend/config.json"
 
 class GMISKnowledgeGraphETL:
     """
