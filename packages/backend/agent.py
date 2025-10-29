@@ -1234,8 +1234,10 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             logging.info(f"Component values: {component_values}")
             
             # 각 구성 요소를 값으로 치환
+            # 모든 가능한 이름을 수집하고 길이순으로 정렬 (긴 것부터 치환)
+            substitutions = []
+            
             for comp_id, value in component_values.items():
-                # 공식에 사용될 수 있는 모든 형태 시도
                 account_config = self.config['entities']['accounts'].get(comp_id, {})
                 possible_names = [
                     comp_id,
@@ -1245,9 +1247,16 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 for name in possible_names:
                     if name:
                         name_no_space = name.replace(" ", "")
-                        if name_no_space in expr:
-                            expr = expr.replace(name_no_space, str(value))
-                            logging.info(f"치환 성공: '{name_no_space}' -> '{value}'")
+                        substitutions.append((name_no_space, str(value)))
+            
+            # 길이순 정렬 (긴 것부터) - 부분 매칭 문제 방지
+            substitutions.sort(key=lambda x: len(x[0]), reverse=True)
+            
+            # 치환 실행
+            for name_no_space, value in substitutions:
+                if name_no_space in expr:
+                    expr = expr.replace(name_no_space, value)
+                    logging.info(f"치환 성공: '{name_no_space}' -> '{value}'")
             
             logging.info(f"최종 expression: {expr}")
             
