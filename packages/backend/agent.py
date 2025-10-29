@@ -2299,6 +2299,68 @@ Inform the user that the file has been created. Simple confirmation only.
                             current_prompt = f"File creation failed: {result.get('error')}. Inform the user."
                             continue
                     
+                    elif tool_name == "calculate_financial_ratio":
+                        print("[작업] 재무비율을 계산하고 있습니다...")
+                        result = self.calculate_financial_ratio(**tool_args)
+                        if result.get("status") == "success":
+                            print(f"[완료] {result['ratio_name']}: {result['value']}{result.get('unit', '')}\n")
+                            current_prompt = f"""Financial ratio calculated successfully:
+
+Ratio: {result['ratio_name']}
+Value: {result['value']}{result.get('unit', '')}
+Formula: {result.get('formula', '')}
+Components used: {result.get('components', {})}
+
+Present this result to the user clearly, including the calculation details.
+"""
+                        else:
+                            print(f"[오류] {result.get('message')}\n")
+                            current_prompt = f"Calculation failed: {result.get('message')}. Inform the user."
+                        continue
+                    
+                    elif tool_name == "get_definition":
+                        print("[작업] 용어 정의를 조회하고 있습니다...")
+                        result = self.get_definition(**tool_args)
+                        if result.get("found"):
+                            print(f"[완료] {result['official_name']} 정의 찾음\n")
+                            current_prompt = f"""Definition found in config.json:
+
+Term: {result['official_name']}
+Type: {result.get('type')}
+Description: {result.get('description')}
+{f"Formula: {result.get('formula')}" if result.get('formula') else ""}
+
+Present this definition to the user. This is our system's official definition, so it's more accurate than general knowledge.
+"""
+                        else:
+                            print(f"[정보] Config에서 찾을 수 없음. 일반 지식 사용\n")
+                            # Fallback to general_knowledge_qa
+                            knowledge_answer = self.general_knowledge_qa(tool_args.get("term", user_query))
+                            current_prompt = f"""Definition not in config, but here's general knowledge:
+
+{knowledge_answer}
+
+Present this to the user.
+"""
+                        continue
+                    
+                    elif tool_name == "get_ratios_by_viewpoint":
+                        print("[작업] 분석 관점별 비율 목록을 조회하고 있습니다...")
+                        result = self.get_ratios_by_viewpoint(**tool_args)
+                        if result.get("found"):
+                            ratios_list = "\n".join([f"- {r['name']} ({r['type']})" for r in result['ratios']])
+                            print(f"[완료] {result['viewpoint']} 관점 비율 {result['count']}개 찾음\n")
+                            current_prompt = f"""Found {result['count']} ratios for {result['viewpoint']} viewpoint:
+
+{ratios_list}
+
+Present this list to the user. You can also ask which specific ratio they want to analyze.
+"""
+                        else:
+                            print(f"[정보] {result.get('message')}\n")
+                            current_prompt = f"Viewpoint not found: {result.get('message')}. Inform the user."
+                        continue
+                    
                     elif tool_name == "general_knowledge_qa":
                         print("[작업] 재무/경영 지식을 검색하고 있습니다...")
                         question = tool_args.get("question", user_query)
