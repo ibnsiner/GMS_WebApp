@@ -2399,31 +2399,55 @@ For numerical queries, use tables.
                             df_sum = df[df['aggregation_type'] == 'SUM'].copy() if 'SUM' in df['aggregation_type'].values else pd.DataFrame()
                             df_last = df[df['aggregation_type'] == 'LAST'].copy() if 'LAST' in df['aggregation_type'].values else pd.DataFrame()
                             
+                            # 집계할 값 컬럼을 동적으로 결정
+                            value_columns = []
+                            calculation_columns = ['variance_pct', 'achievement_rate', 'ytd_total', 'quarterly_value']
+                            
+                            for col in df.columns:
+                                if col in calculation_columns:
+                                    continue  # 이미 계산된 컬럼은 집계하지 않음
+                                if 'value' in col.lower() or col in ['plan', 'actual']:
+                                    value_columns.append(col)
+                            
+                            if not value_columns:
+                                raise ValueError("집계할 값 컬럼을 찾을 수 없습니다.")
+                            
+                            print(f"[DEBUG] 감지된 값 컬럼: {value_columns}")
+                            logging.info(f"동적 컬럼 감지: {value_columns}")
+                            
                             summary_parts = []
                             
                             # SUM 항목 집계 (IS 계정: 매출, 영업이익 등)
                             if not df_sum.empty:
                                 # 연도별로 구분하여 집계
                                 group_cols = [col for col in ['c.name', 'p.year', 'a.name', 'statement_scope'] if col in df_sum.columns]
-                                summary_sum = df_sum.groupby(group_cols)['v.value'].sum().reset_index()
-                                summary_parts.append(summary_sum)
-                                logging.info(f"SUM 집계 완료: {len(df_sum)}개 레코드 → {len(summary_sum)}개 연도별 집계")
+                                # 존재하는 값 컬럼만 집계
+                                sum_value_cols = [col for col in value_columns if col in df_sum.columns]
+                                if sum_value_cols:
+                                    summary_sum = df_sum.groupby(group_cols)[sum_value_cols].sum().reset_index()
+                                    summary_parts.append(summary_sum)
+                                    logging.info(f"SUM 집계 완료: {len(df_sum)}개 레코드 → {len(summary_sum)}개 연도별 집계 (컬럼: {sum_value_cols})")
                             
                             # LAST 항목 집계 (BS 계정: 자산, 부채, 자기자본 등)
                             if not df_last.empty:
                                 # 연도와 월 기준으로 정렬 후 그룹별 마지막 값 선택
                                 group_cols = [col for col in ['c.name', 'p.year', 'a.name', 'statement_scope'] if col in df_last.columns]
+                                last_value_cols = [col for col in value_columns if col in df_last.columns]
                                 summary_last = df_last.sort_values(['p.year', 'p.month']).groupby(group_cols, as_index=False).last()
-                                summary_last = summary_last[group_cols + ['v.value']]
+                                keep_cols = group_cols + last_value_cols
+                                summary_last = summary_last[[col for col in keep_cols if col in summary_last.columns]]
                                 summary_parts.append(summary_last)
-                                logging.info(f"LAST 집계 완료: {len(df_last)}개 레코드 → {len(summary_last)}개 연도별 기말값")
+                                logging.info(f"LAST 집계 완료: {len(df_last)}개 레코드 → {len(summary_last)}개 연도별 기말값 (컬럼: {last_value_cols})")
                             
                             # 결과 병합
                             if summary_parts:
                                 summary_df = pd.concat(summary_parts, ignore_index=True)
-                                summary_df['v.value'] = summary_df['v.value'].apply(lambda x: f"{x:,.0f}")
+                                # 모든 숫자 값 컬럼에 형식 적용
+                                for col in value_columns:
+                                    if col in summary_df.columns:
+                                        summary_df[col] = summary_df[col].apply(lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) else x)
                                 summary_md = summary_df.to_markdown(index=False)
-                                logging.info("지능적 집계 완료 (SUM/LAST 규칙)")
+                                logging.info("지능적 집계 완료 (SUM/LAST 규칙, 동적 컬럼)")
                             else:
                                 summary_md = "집계 불가"
                             print("[DEBUG] 1. 연간 요약 집계 완료.")
