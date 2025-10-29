@@ -539,10 +539,11 @@ Example for "제조4사" (from runtime context):
 
 **Tools:**
 - run_cypher_query(query: str) - LS Group 데이터 조회
-- data_visualization(chart_type, title, x_col='p.month', y_cols=['v.value'], company_filter=None, account_filter=None, show_trendline=False) - 차트 생성
+- data_visualization(chart_type, title, x_col='p.month', y_cols=['v.value'], company_filter=None, account_filter=None, year_filter=None, show_trendline=False) - 차트 생성
   * data parameter는 생략 (자동으로 캐시된 데이터 사용)
   * company_filter: 회사명 필터 (예: "전선", "ELECTRIC")
   * account_filter: 계정명 필터 (예: "매출", "영업이익")
+  * year_filter: 연도 필터 (예: 2022, 2023) - If user specifies year, use this!
   * show_trendline: True면 선형 회귀 추세선 추가 (line chart only)
 - generate_downloadable_link(data, file_name, file_type) - CSV/JSON 저장
 - general_knowledge_qa(question: str) - 재무/경영 지식 제공
@@ -656,11 +657,12 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 "original_query": query
             }
     
-    def data_visualization(self, data: list = None, chart_type: str = 'bar', title: str = '', x_col: str = '', y_cols: list = None, company_filter: str = None, account_filter: str = None, show_trendline: bool = False, return_base64: bool = True) -> dict:
+    def data_visualization(self, data: list = None, chart_type: str = 'bar', title: str = '', x_col: str = '', y_cols: list = None, company_filter: str = None, account_filter: str = None, year_filter: int = None, show_trendline: bool = False, return_base64: bool = True) -> dict:
         """
         차트 생성 및 PNG 저장 (필터링 기능 강화)
         - company_filter: 특정 회사 데이터만 필터링
         - account_filter: 특정 계정 데이터만 필터링
+        - year_filter: 특정 연도 데이터만 필터링 (예: 2022, 2023)
         - return_base64: True면 base64 인코딩된 이미지 반환 (API용)
         """
         # Gemini Function Call에서 타입 변환
@@ -700,6 +702,13 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 if 'a.name' in df.columns:
                     df = df[df['a.name'].str.contains(clean_account_filter, case=False, na=False, regex=False)]
                     print(f"[DEBUG] 계정 필터({clean_account_filter}) 적용 후: {len(df)}개 레코드")
+            
+            if year_filter:
+                # 연도 필터링
+                if 'p.year' in df.columns:
+                    df = df[df['p.year'] == year_filter]
+                    print(f"[DEBUG] 연도 필터({year_filter}) 적용 후: {len(df)}개 레코드")
+                    logging.info(f"연도 필터 적용: {year_filter}년만")
 
             print(f"[DEBUG] 최종 필터링 완료: {len(df)}개 레코드")
             if df.empty:
@@ -1654,6 +1663,7 @@ User's request: "{user_query}"
        y_cols=['v.value'],  # Value axis
        company_filter='회사명',  # IMPORTANT! Extract from user request
        account_filter='계정명',   # IMPORTANT! Extract from user request
+       year_filter=2022 or 2023,  # CRITICAL! If user specifies year
        show_trendline=True  # If user asks for "추세선", "trendline", "회귀선"
    )
    ```
@@ -1661,13 +1671,18 @@ User's request: "{user_query}"
 3. **Extract filters from user's request**:
    - "전선의 매출" → company_filter='전선', account_filter='매출'
    - "ELECTRIC 영업이익" → company_filter='ELECTRIC', account_filter='영업이익'
-   - "MnM 자본" → company_filter='MnM', account_filter='자본'
+   - "2022년 매출" → year_filter=2022, account_filter='매출'
+   - "2023년 일렉트릭" → year_filter=2023, company_filter='ELECTRIC'
    
-4. **DO NOT try to find combined column names** like 'LS전선(연결) 매출액 합계'!
+4. **CRITICAL for year filters**:
+   - If user says "2022년", "2023년", "2024년" → ALWAYS use year_filter
+   - Do NOT show multiple years when user asks for one specific year
+   
+5. **DO NOT try to find combined column names** like 'LS전선(연결) 매출액 합계'!
    The data has separate columns: c.name, a.name, v.value
    Use filters to select specific company and account.
 
-5. After tool success: Simple confirmation only!
+6. After tool success: Simple confirmation only!
 
 Example:
 "요청하신 차트를 생성했습니다. 파일 경로: [path]"
@@ -2051,19 +2066,20 @@ For numerical queries, use tables.
                             
                             # SUM 항목 집계 (IS 계정: 매출, 영업이익 등)
                             if not df_sum.empty:
-                                group_cols = [col for col in ['c.name', 'a.name', 'statement_scope'] if col in df_sum.columns]
+                                # 연도별로 구분하여 집계
+                                group_cols = [col for col in ['c.name', 'p.year', 'a.name', 'statement_scope'] if col in df_sum.columns]
                                 summary_sum = df_sum.groupby(group_cols)['v.value'].sum().reset_index()
                                 summary_parts.append(summary_sum)
-                                logging.info(f"SUM 집계 완료: {len(df_sum)}개 레코드")
+                                logging.info(f"SUM 집계 완료: {len(df_sum)}개 레코드 → {len(summary_sum)}개 연도별 집계")
                             
                             # LAST 항목 집계 (BS 계정: 자산, 부채, 자기자본 등)
                             if not df_last.empty:
-                                # 월 기준으로 정렬 후 그룹별 마지막 값 선택
-                                group_cols = [col for col in ['c.name', 'a.name', 'statement_scope'] if col in df_last.columns]
-                                summary_last = df_last.sort_values('p.month').groupby(group_cols, as_index=False).last()
+                                # 연도와 월 기준으로 정렬 후 그룹별 마지막 값 선택
+                                group_cols = [col for col in ['c.name', 'p.year', 'a.name', 'statement_scope'] if col in df_last.columns]
+                                summary_last = df_last.sort_values(['p.year', 'p.month']).groupby(group_cols, as_index=False).last()
                                 summary_last = summary_last[group_cols + ['v.value']]
                                 summary_parts.append(summary_last)
-                                logging.info(f"LAST 집계 완료: {len(df_last)}개 레코드 → 기말값")
+                                logging.info(f"LAST 집계 완료: {len(df_last)}개 레코드 → {len(summary_last)}개 연도별 기말값")
                             
                             # 결과 병합
                             if summary_parts:
@@ -2082,10 +2098,15 @@ For numerical queries, use tables.
                         # 2. 월별 상세 데이터 (PIVOT 시도)
                         print("[DEBUG] 2. 월별 상세 데이터 가공 시작...")
                         try:
+                            # 연도가 여러 개인지 확인
+                            has_multiple_years = 'p.year' in df.columns and len(df['p.year'].unique()) > 1
+                            
                             if len(df['c.name'].unique()) > 1:
                                 # 다중 회사: PIVOT 테이블
+                                # 연도가 여러 개면 index에 year 포함
+                                index_cols = ['p.year', 'p.month'] if has_multiple_years else ['p.month']
                                 pivot_df = df.pivot_table(
-                                    index='p.month', 
+                                    index=index_cols, 
                                     columns=['c.name', 'a.name'], 
                                     values='v.value', 
                                     aggfunc='sum'
@@ -2094,6 +2115,7 @@ For numerical queries, use tables.
                                 monthly_format = "PIVOT_CSV"
                             else:
                                 # 단일 회사: 일반 CSV
+                                # year 컬럼을 포함
                                 monthly_csv = df.to_csv(index=False)
                                 monthly_format = "CSV"
                             print("[DEBUG] 2. 월별 상세 데이터 가공 완료.")
