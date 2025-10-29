@@ -670,43 +670,53 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 logging.error(error_msg)
                 return {"error": error_msg}
             
-            # 한글 폰트 설정 (개선)
-            import platform
-            import matplotlib.font_manager as fm
-            
-            system = platform.system()
-            if system == 'Windows':
-                # Windows: 맑은 고딕 폰트 사용
-                font_path = 'C:\\Windows\\Fonts\\malgun.ttf'
-                if os.path.exists(font_path):
-                    font_prop = fm.FontProperties(fname=font_path)
-                    plt.rcParams['font.family'] = font_prop.get_name()
-                else:
-                    # 맑은 고딕이 없으면 굴림 시도
-                    plt.rcParams['font.family'] = 'Malgun Gothic'
-            elif system == 'Darwin':
-                plt.rcParams['font.family'] = 'AppleGothic'
-            else:
-                plt.rcParams['font.family'] = 'DejaVu Sans'
-            
+            # 전문적인 차트 스타일 설정 (한글 폰트 설정 제거 - 모든 텍스트 영문화)
+            plt.rcParams['font.family'] = 'sans-serif'
             plt.rcParams['axes.unicode_minus'] = False
             
-            # 폰트 캐시 재빌드 (한 번만)
-            try:
-                fm._load_fontmanager(try_read_cache=False)
-            except:
-                pass
-            
-            # 전문적인 차트 스타일 설정
-            plt.style.use('seaborn-v0_8-darkgrid' if 'seaborn-v0_8-darkgrid' in plt.style.available else 'default')
-            
             fig, ax = plt.subplots(figsize=(14, 8), facecolor='white')
-            ax.set_facecolor('#f8f9fa')
+            # 배경색 제거 (깔끔한 흰색)
+            ax.set_facecolor('white')
             
             # 값을 억원 단위로 변환 (가독성 향상)
             def convert_to_eok(value):
                 """값을 억원 단위로 변환"""
                 return value / 100000000 if pd.notna(value) else 0
+            
+            # 한글-영문 변환 함수
+            def translate_to_english(text):
+                """한글 재무 용어를 영문으로 변환"""
+                translations = {
+                    # 회사명
+                    'LS전선': 'LS Cable',
+                    'LS일렉트릭': 'LS ELECTRIC',
+                    'LS MnM': 'LS MnM',
+                    'LS엠앤엠': 'LS MnM',
+                    # 재무 계정
+                    '매출액 합계': 'Total Revenue',
+                    '매출액': 'Revenue',
+                    '영업이익': 'Operating Profit',
+                    '조정영업이익': 'Adjusted OP',
+                    '당기순이익': 'Net Income',
+                    '자산총계': 'Total Assets',
+                    '부채총계': 'Total Liabilities',
+                    '자기자본': 'Equity',
+                    '매출총이익': 'Gross Profit',
+                    '세전이익': 'Pre-tax Income',
+                    # 일반 용어
+                    '월별': 'Monthly',
+                    '년': ' ',
+                    '의': ' ',
+                    '연결': 'Consolidated',
+                    '별도': 'Separate'
+                }
+                result = text
+                for kr, en in translations.items():
+                    result = result.replace(kr, en)
+                # 여러 공백을 하나로
+                import re
+                result = re.sub(r'\s+', ' ', result).strip()
+                return result
             
             # 전문적인 색상 팔레트
             colors = ['#2563eb', '#dc2626', '#16a34a', '#ca8a04', '#9333ea', '#0891b2']
@@ -720,14 +730,36 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                         subset = df[df['a.name'] == account].copy()
                         subset['v.value_eok'] = subset['v.value'].apply(convert_to_eok)
                         color = colors[idx % len(colors)]
+                        account_en = translate_to_english(account)
                         
                         if chart_type == 'line':
-                            ax.plot(subset[x_col], subset['v.value_eok'], 
-                                   marker='o', label=account, linewidth=2.5, 
+                            line = ax.plot(subset[x_col], subset['v.value_eok'], 
+                                   marker='o', label=account_en, linewidth=2.5, 
                                    markersize=8, color=color)
+                            # 데이터 포인트 위에 값 표시
+                            for x, y in zip(subset[x_col], subset['v.value_eok']):
+                                ax.annotate(f'{int(y):,}', 
+                                          (x, y), 
+                                          textcoords="offset points",
+                                          xytext=(0, 10),
+                                          ha='center',
+                                          fontsize=9,
+                                          color=color,
+                                          fontweight='bold')
                         elif chart_type == 'bar':
-                            ax.bar(subset[x_col], subset['v.value_eok'], 
-                                  label=account, alpha=0.85, color=color, edgecolor='white', linewidth=1.5)
+                            bars = ax.bar(subset[x_col], subset['v.value_eok'], 
+                                  label=account_en, alpha=0.85, color=color, edgecolor='white', linewidth=1.5)
+                            # 바 위에 값 표시
+                            for bar in bars:
+                                height = bar.get_height()
+                                ax.annotate(f'{int(height):,}',
+                                          xy=(bar.get_x() + bar.get_width() / 2, height),
+                                          xytext=(0, 5),
+                                          textcoords="offset points",
+                                          ha='center', 
+                                          va='bottom',
+                                          fontsize=9,
+                                          fontweight='bold')
                     if len(unique_accounts) > 1:
                         ax.legend(fontsize=11, frameon=True, shadow=True, fancybox=True)
                 else:
@@ -736,36 +768,85 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                     if chart_type == 'line':
                         ax.plot(df[x_col], df['v.value_eok'], marker='o', 
                                linewidth=2.5, markersize=8, color=colors[0])
+                        # 데이터 포인트 위에 값 표시
+                        for x, y in zip(df[x_col], df['v.value_eok']):
+                            ax.annotate(f'{int(y):,}', 
+                                      (x, y), 
+                                      textcoords="offset points",
+                                      xytext=(0, 10),
+                                      ha='center',
+                                      fontsize=9,
+                                      color=colors[0],
+                                      fontweight='bold')
                     elif chart_type == 'bar':
-                        ax.bar(df[x_col], df['v.value_eok'], 
+                        bars = ax.bar(df[x_col], df['v.value_eok'], 
                               alpha=0.85, color=colors[0], edgecolor='white', linewidth=1.5)
+                        # 바 위에 값 표시
+                        for bar in bars:
+                            height = bar.get_height()
+                            ax.annotate(f'{int(height):,}',
+                                      xy=(bar.get_x() + bar.get_width() / 2, height),
+                                      xytext=(0, 5),
+                                      textcoords="offset points",
+                                      ha='center', 
+                                      va='bottom',
+                                      fontsize=9,
+                                      fontweight='bold')
             else:
                 # y_cols가 명시적으로 주어지면 기존 방식대로 그림
                 for idx, y_col in enumerate(y_cols):
                     color = colors[idx % len(colors)]
+                    y_col_en = translate_to_english(y_col)
+                    
                     if chart_type == 'line':
-                        ax.plot(df[x_col], df[y_col], marker='o', label=y_col,
+                        ax.plot(df[x_col], df[y_col], marker='o', label=y_col_en,
                                linewidth=2.5, markersize=8, color=color)
+                        # 데이터 포인트 위에 값 표시
+                        for x, y in zip(df[x_col], df[y_col]):
+                            ax.annotate(f'{int(y):,}', 
+                                      (x, y), 
+                                      textcoords="offset points",
+                                      xytext=(0, 10),
+                                      ha='center',
+                                      fontsize=9,
+                                      color=color,
+                                      fontweight='bold')
                     elif chart_type == 'bar':
-                        ax.bar(df[x_col], df[y_col], label=y_col, 
+                        bars = ax.bar(df[x_col], df[y_col], label=y_col_en, 
                               alpha=0.85, color=color, edgecolor='white', linewidth=1.5)
+                        # 바 위에 값 표시
+                        for bar in bars:
+                            height = bar.get_height()
+                            ax.annotate(f'{int(height):,}',
+                                      xy=(bar.get_x() + bar.get_width() / 2, height),
+                                      xytext=(0, 5),
+                                      textcoords="offset points",
+                                      ha='center', 
+                                      va='bottom',
+                                      fontsize=9,
+                                      fontweight='bold')
                 if len(y_cols) > 1:
                     ax.legend(fontsize=11, frameon=True, shadow=True, fancybox=True)
 
-            # 차트 스타일링 (영문 우선, 한글은 제목만)
-            ax.set_title(title, fontsize=18, fontweight='bold', pad=20)
+            # 차트 스타일링 (모든 텍스트 영문화)
+            title_en = translate_to_english(title).strip()
+            if not title_en or title_en == title:
+                title_en = 'Financial Data Chart'
+            
+            ax.set_title(title_en, fontsize=18, fontweight='bold', pad=20)
             ax.set_xlabel('Month' if x_col == 'p.month' else x_col, fontsize=13, fontweight='600')
             ax.set_ylabel('Amount (100M KRW)', fontsize=13, fontweight='600')
             
-            # 그리드 스타일링
-            ax.grid(True, alpha=0.2, linestyle='--', linewidth=0.8, color='gray')
-            ax.set_axisbelow(True)
+            # 그리드 제거 (깔끔한 차트)
+            ax.grid(False)
             
-            # 축 스타일링
+            # 축 스타일링 (미니멀)
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
-            ax.spines['left'].set_color('#cccccc')
-            ax.spines['bottom'].set_color('#cccccc')
+            ax.spines['left'].set_color('#dddddd')
+            ax.spines['left'].set_linewidth(1.5)
+            ax.spines['bottom'].set_color('#dddddd')
+            ax.spines['bottom'].set_linewidth(1.5)
             
             # Y축 포맷팅 (천 단위 구분 쉼표)
             from matplotlib.ticker import FuncFormatter
