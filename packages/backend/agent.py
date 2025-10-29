@@ -1168,63 +1168,103 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             if ratio_config['type'] != 'CALCULATED':
                 return {"status": "error", "message": f"'{ratio_id}'는 이미 저장된 값입니다. 직접 조회하세요."}
             
-            # 1. 구성 요소 조회 (최적화: 한 번에 모두 조회)
+            # 1. 구성 요소별로 aggregation 타입에 맞게 조회
             components = ratio_config['components']
-            
-            query = f"""
-            MATCH (c:Company {{id: '{company_id}'}})-[:HAS_STATEMENT]->(fs:FinancialStatement)
-            WHERE fs.id CONTAINS '{period}' AND fs.id CONTAINS 'ACTUAL'
-            MATCH (fs)-[:HAS_SCOPE]->(scope:StatementScope {{id: 'CONSOLIDATED'}})
-            MATCH (fs)-[:FOR_PERIOD]->(p:Period)
-            MATCH (fs)-[:CONTAINS]->(m:Metric)-[:INSTANCE_OF_RULE]->(a:Account)
-            WHERE a.id IN {components}
-            MATCH (m)-[:HAS_OBSERVATION]->(v:ValueObservation)
-            WITH a.id as account_id, p.month as month, v.value as value
-            ORDER BY a.id, month DESC
-            RETURN account_id, collect(value)[0] as latest_value
-            """
-            
-            result = self.run_cypher_query(query)
-            
-            if result['status'] != 'success' or len(result['data']) == 0:
-                return {"status": "error", "message": "구성 요소 데이터를 찾을 수 없습니다."}
-            
             component_values = {}
-            for row in result['data']:
-                component_values[row['account_id']] = row['latest_value']
             
-            # 2. 공식 파싱 및 계산 (안전하고 견고한 방식)
-            formula = ratio_config['formula_human']
-            # 예: "(당기순이익 / 자기자본_합계) * 100"
-            
-            # 공식에 있는 계정 ID를 실제 값으로 치환하기 위한 매핑 생성
-            # config의 official_name, aliases 등을 모두 고려하여 유연하게 매핑
-            value_map = {}
-            for comp_id, value in component_values.items():
-                account_config = self.config['entities']['accounts'].get(comp_id, {})
-                # 공식에 사용될 수 있는 모든 이름을 키로 사용
-                all_names = [account_config.get('official_name', comp_id)] + account_config.get('aliases', []) + [comp_id]
-                for name in all_names:
-                    # 공백 제거하여 매칭
-                    value_map[name.replace(" ", "")] = str(value)
-            
-            # 공식 문자열에서 계정 이름을 실제 값으로 치환
-            expr = formula.replace(" ", "")  # 공식에서도 공백 제거
-            for name, value in value_map.items():
-                expr = expr.replace(name, value)
-            
-            # 보안을 위해 안전한 eval 사용 (숫자와 기본 연산자만 허용)
-            try:
-                # 안전한 문자만 있는지 확인
-                import re
-                if not re.match(r'^[0-9\.\+\-\*\/\(\)]+$', expr):
-                    return {"status": "error", "message": "공식에 허용되지 않은 문자가 포함되어 있습니다", "expression": expr}
+            for comp_account_id in components:
+                account_config = self.config['entities']['accounts'].get(comp_account_id)
+                if not account_config:
+                    return {"status": "error", "message": f"구성 요소 '{comp_account_id}'의 설정을 찾을 수 없습니다."}
                 
-                # eval로 계산 실행
+                agg_type = account_config.get('aggregation', 'SUM')
+                
+                # 집계 유형에 따라 다른 쿼리 생성
+                if agg_type == 'SUM':
+                    # IS 항목: 전체 기간 합계
+                    query = f"""
+                    MATCH (c:Company {{id: '{company_id}'}})-[:HAS_STATEMENT]->(fs:FinancialStatement)
+                    WHERE fs.id CONTAINS '{period}' AND fs.id CONTAINS 'ACTUAL'
+                    MATCH (fs)-[:HAS_SCOPE]->(scope:StatementScope {{id: 'CONSOLIDATED'}})
+                    MATCH (fs)-[:CONTAINS]->(m:Metric)-[:INSTANCE_OF_RULE]->(a:Account {{id: '{comp_account_id}'}})
+                    MATCH (m)-[:HAS_OBSERVATION]->(v:ValueObservation)
+                    RETURN sum(v.value) as value
+                    """
+                elif agg_type == 'LAST':
+                    # BS 항목: 마지막 월 값
+                    query = f"""
+                    MATCH (c:Company {{id: '{company_id}'}})-[:HAS_STATEMENT]->(fs:FinancialStatement)
+                    WHERE fs.id CONTAINS '{period}' AND fs.id CONTAINS 'ACTUAL'
+                    MATCH (fs)-[:HAS_SCOPE]->(scope:StatementScope {{id: 'CONSOLIDATED'}})
+                    MATCH (fs)-[:FOR_PERIOD]->(p:Period)
+                    MATCH (fs)-[:CONTAINS]->(m:Metric)-[:INSTANCE_OF_RULE]->(a:Account {{id: '{comp_account_id}'}})
+                    MATCH (m)-[:HAS_OBSERVATION]->(v:ValueObservation)
+                    RETURN v.value as value
+                    ORDER BY p.year DESC, p.month DESC
+                    LIMIT 1
+                    """
+                else:
+                    return {"status": "error", "message": f"'{comp_account_id}'의 집계 유형 '{agg_type}'은 지원되지 않습니다."}
+                
+                # 쿼리 실행
+                result = self.run_cypher_query(query)
+                
+                if result['status'] == 'success' and result.get('data') and len(result['data']) > 0:
+                    value = result['data'][0].get('value')
+                    if value is not None:
+                        component_values[comp_account_id] = value
+                        logging.info(f"{comp_account_id} ({agg_type}): {value}")
+                    else:
+                        return {"status": "error", "message": f"'{comp_account_id}' 값이 null입니다."}
+                else:
+                    return {"status": "error", "message": f"'{comp_account_id}' 조회 실패"}
+            
+            if len(component_values) != len(components):
+                return {"status": "error", "message": f"일부 구성 요소를 찾지 못했습니다. 필요: {components}, 조회됨: {list(component_values.keys())}"}
+            
+            # 2. 공식 파싱 및 계산
+            formula = ratio_config['formula_human']
+            
+            # 공식에서 계정명을 실제 값으로 치환
+            expr = formula.replace(" ", "")  # 공백 제거
+            
+            # 디버깅 로그
+            logging.info(f"원본 공식: {formula}")
+            logging.info(f"공백 제거 후: {expr}")
+            logging.info(f"Component values: {component_values}")
+            
+            # 각 구성 요소를 값으로 치환
+            for comp_id, value in component_values.items():
+                # 공식에 사용될 수 있는 모든 형태 시도
+                account_config = self.config['entities']['accounts'].get(comp_id, {})
+                possible_names = [
+                    comp_id,
+                    account_config.get('official_name', ''),
+                ] + account_config.get('aliases', [])
+                
+                for name in possible_names:
+                    if name:
+                        name_no_space = name.replace(" ", "")
+                        if name_no_space in expr:
+                            expr = expr.replace(name_no_space, str(value))
+                            logging.info(f"치환 성공: '{name_no_space}' -> '{value}'")
+            
+            logging.info(f"최종 expression: {expr}")
+            
+            # 안전한 eval 실행
+            try:
+                import re
+                # 숫자, 소수점, 연산자, 괄호, 과학적 표기법만 허용
+                if not re.match(r'^[0-9eE\.\+\-\*\/\(\)]+$', expr):
+                    logging.error(f"허용되지 않은 문자 포함: {expr}")
+                    return {"status": "error", "message": "공식에 허용되지 않은 문자 포함", "expression": expr, "formula": formula}
+                
                 calculated_value = eval(expr)
+                logging.info(f"계산 결과: {calculated_value}")
                 
             except Exception as e:
-                return {"status": "error", "message": f"공식 계산 실패: {str(e)}", "expression": expr}
+                logging.error(f"계산 실패: {e}")
+                return {"status": "error", "message": f"계산 실패: {str(e)}", "expression": expr}
             
             return {
                 "status": "success",
