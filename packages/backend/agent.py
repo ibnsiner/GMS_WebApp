@@ -1481,12 +1481,16 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             # 2. 각 섹션이 테이블인지 검사 (지능)
             lines = [line.strip() for line in section_content.split('\n') if line.strip()]
             
-            # 테이블 판단: 최소 3줄, 첫 줄에 |, 두 번째 줄에 ---, 나머지에도 |
+            # 테이블 판단: 섹션 내에 마크다운 테이블 패턴이 있는지 확인
             is_table_section = False
-            if len(lines) >= 3:
-                if '|' in lines[0] and '---' in lines[1]:
-                    if any('|' in line for line in lines[2:]):
-                        is_table_section = True
+            table_start = -1
+            
+            # 어느 줄이든 헤더 + 구분자 패턴 찾기
+            for i in range(len(lines) - 1):
+                if '|' in lines[i] and '---' in lines[i+1] and '|' in lines[i+1]:
+                    is_table_section = True
+                    table_start = i
+                    break
             
             if is_table_section:
                 # 3-A. 테이블이면 구조화된 JSON으로 변환
