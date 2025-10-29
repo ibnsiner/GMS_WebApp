@@ -608,11 +608,11 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
     def run_cypher_query(self, query: str) -> dict:
         """Neo4j Cypher 쿼리 실행 (환각 방지 강화)"""
         
-        # 디버깅: 실제 실행되는 쿼리 출력
-        print("="*80)
-        print("Executing Cypher Query:")
-        print(query)
-        print("="*80)
+        # 디버깅: 실제 실행되는 쿼리 출력 (logging 사용 - stdout 캡처의 영향 안 받음)
+        logging.info("="*80)
+        logging.info("Executing Cypher Query:")
+        logging.info(query)
+        logging.info("="*80)
         
         try:
             with self.driver.session() as session:
