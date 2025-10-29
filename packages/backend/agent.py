@@ -129,7 +129,8 @@ class GmisAgentV4:
             "viewpoint": {},
             "temporal_relation": {},
             "temporal_unit": {},
-            "analysis_type": {}
+            "analysis_type": {},
+            "comparison_type": {}  # 새로 추가: 계획-실적 비교
         }
         
         # 회사 별칭
@@ -182,6 +183,13 @@ class GmisAgentV4:
                 for alias in aliases:
                     if alias:
                         nlu["analysis_type"][alias.lower()] = analysis_type
+        
+        # 비교 타입 (계획-실적)
+        plan_vs_actual = self.config.get('relationships', {}).get('contextual_relationships', {}).get('PLAN_VS_ACTUAL', {})
+        if plan_vs_actual:
+            for alias in plan_vs_actual.get('aliases', []):
+                if alias:
+                    nlu["comparison_type"][alias.lower()] = "PLAN_VS_ACTUAL"
         
         return nlu
     
@@ -373,9 +381,55 @@ RETURN c.name, q.id as quarter, a.name, sum(v.value) as quarterly_value
 ORDER BY q.id, a.name
 ```
 
+**계획-실적 비교 조회** (PLAN vs ACTUAL):
+```cypher
+// When user asks "계획 대비", "실적 대비", "목표 달성률", "달성률"
+MATCH (c:Company {id: 'ELECTRIC'})-[:HAS_STATEMENT]->(fs_actual:FinancialStatement)
+WHERE fs_actual.id CONTAINS '2023' AND fs_actual.id CONTAINS 'ACTUAL'
+MATCH (fs_actual)-[:COMPARISON_FOR]->(fs_plan:FinancialStatement)
+MATCH (fs_actual)-[:FOR_PERIOD]->(p:Period)
+MATCH (fs_actual)-[:CONTAINS]->(m_actual:Metric)-[:INSTANCE_OF_RULE]->(a:Account)
+WHERE a.id = '매출액_합계'
+MATCH (fs_plan)-[:CONTAINS]->(m_plan:Metric)-[:INSTANCE_OF_RULE]->(a)
+MATCH (m_actual)-[:HAS_OBSERVATION]->(v_actual:ValueObservation)
+MATCH (m_plan)-[:HAS_OBSERVATION]->(v_plan:ValueObservation)
+RETURN 
+  c.name, 
+  p.month, 
+  a.name,
+  v_plan.value as plan,
+  v_actual.value as actual,
+  ((v_actual.value - v_plan.value) / v_plan.value * 100) as variance_pct
+ORDER BY p.month
+```
+
+**YTD (Year-to-Date) 누계 조회**:
+```cypher
+// When user asks "누계", "연초부터", "YTD", "~월까지"
+// Single optimized query - finds latest month automatically
+MATCH (c:Company {id: 'MnM'})-[:HAS_STATEMENT]->(fs:FinancialStatement)
+WHERE fs.id CONTAINS '2023' AND fs.id CONTAINS 'ACTUAL'
+MATCH (fs)-[:FOR_PERIOD]->(p:Period)
+MATCH (fs)-[:CONTAINS]->(m:Metric)-[:INSTANCE_OF_RULE]->(a:Account)
+WHERE a.id = '매출액_합계'
+MATCH (m)-[:HAS_OBSERVATION]->(v:ValueObservation)
+WITH c, a, max(p.month) as latest_month, collect({month: p.month, value: v.value}) as monthly_data
+UNWIND monthly_data as md
+RETURN c.name, a.name, sum(md.value) as ytd_total, latest_month
+
+// If user specifies month: "9월까지 누계"
+// Add: WHERE p.month <= 9 after MATCH (fs)-[:FOR_PERIOD]->(p:Period)
+```
+
 **CRITICAL**: 
 - For quarterly data: Use Quarter nodes and aggregate with `sum(v.value)`
 - Quarter IDs: '2023-Q1', '2023-Q2', '2023-Q3', '2023-Q4'
+- For PLAN vs ACTUAL: Use COMPARISON_FOR relationship
+- For YTD: Use WITH clause to find max month and aggregate in single query
+- Calculate variance_pct in Cypher for efficiency
+- Keywords: 
+  * PLAN_VS_ACTUAL: "계획 대비", "실적 대비", "목표 달성률", "달성률", "예산 대비"
+  * YTD: "누계", "누적", "연초부터", "YTD", "~까지"
 - ALWAYS include `scope.id AS statement_scope` in RETURN!
 
 
@@ -575,7 +629,18 @@ Example for "제조4사" (from runtime context):
   * year_filter: 연도 필터 (예: 2022, 2023) - If user specifies year, use this!
   * show_trendline: True면 선형 회귀 추세선 추가 (line chart only)
 - generate_downloadable_link(data, file_name, file_type) - CSV/JSON 저장
+- calculate_financial_ratio(ratio_id, company_id, period='2023') - 재무비율 자동 계산
+  * ratio_id: 'ROE', '매출채권회전율' 등 (CALCULATED 타입만)
+  * Returns calculated value with formula and components
+- get_ratios_by_viewpoint(viewpoint_name) - 분석 관점별 비율 목록
+  * viewpoint_name: "수익성", "안정성", "활동성", "성장성"
+  * Returns list of all ratios in that viewpoint
+- get_definition(term) - 재무 용어 정의 조회
+  * term: "영업이익", "ROE" 등
+  * Returns definition from config.json (more accurate than general knowledge!)
+  * Use this BEFORE general_knowledge_qa for term definitions
 - general_knowledge_qa(question: str) - 재무/경영 지식 제공
+  * Use when get_definition doesn't find the term
 
 **🎯 Two Types of Questions (중요!):**
 
@@ -1082,6 +1147,177 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             logging.error(f"파일 생성 오류: {e}")
             return {"error": str(e)}
     
+    def calculate_financial_ratio(self, ratio_id: str, company_id: str, period: str = '2023') -> dict:
+        """
+        config.json의 formula를 읽고 재무비율 자동 계산
+        
+        Args:
+            ratio_id: 'ROE', '매출채권회전율' 등
+            company_id: 'ELECTRIC', 'MnM' 등
+            period: '2023', '2024' 등
+        
+        Returns:
+            {"status": "success", "ratio_name": "ROE", "value": 15.2, ...}
+        """
+        try:
+            ratio_config = self.config['financial_ratios']['ratios'].get(ratio_id)
+            
+            if not ratio_config:
+                return {"status": "error", "message": f"'{ratio_id}' 비율을 찾을 수 없습니다."}
+            
+            if ratio_config['type'] != 'CALCULATED':
+                return {"status": "error", "message": f"'{ratio_id}'는 이미 저장된 값입니다. 직접 조회하세요."}
+            
+            # 1. 구성 요소 조회 (최적화: 한 번에 모두 조회)
+            components = ratio_config['components']
+            
+            query = f"""
+            MATCH (c:Company {{id: '{company_id}'}})-[:HAS_STATEMENT]->(fs:FinancialStatement)
+            WHERE fs.id CONTAINS '{period}' AND fs.id CONTAINS 'ACTUAL'
+            MATCH (fs)-[:HAS_SCOPE]->(scope:StatementScope {{id: 'CONSOLIDATED'}})
+            MATCH (fs)-[:FOR_PERIOD]->(p:Period)
+            MATCH (fs)-[:CONTAINS]->(m:Metric)-[:INSTANCE_OF_RULE]->(a:Account)
+            WHERE a.id IN {components}
+            MATCH (m)-[:HAS_OBSERVATION]->(v:ValueObservation)
+            WITH a.id as account_id, p.month as month, v.value as value
+            ORDER BY a.id, month DESC
+            RETURN account_id, collect(value)[0] as latest_value
+            """
+            
+            result = self.run_cypher_query(query)
+            
+            if result['status'] != 'success' or len(result['data']) == 0:
+                return {"status": "error", "message": "구성 요소 데이터를 찾을 수 없습니다."}
+            
+            component_values = {}
+            for row in result['data']:
+                component_values[row['account_id']] = row['latest_value']
+            
+            # 2. 공식 계산 (간단한 파서)
+            formula = ratio_config['formula_human']
+            
+            # 예: "(당기순이익 / 자기자본_합계) * 100"
+            # 간단한 eval 방식 (안전하게 처리)
+            calc_formula = formula
+            for comp_id, value in component_values.items():
+                calc_formula = calc_formula.replace(comp_id, str(value))
+            
+            try:
+                calculated_value = eval(calc_formula)
+            except:
+                return {"status": "error", "message": "공식 계산 실패"}
+            
+            return {
+                "status": "success",
+                "ratio_name": ratio_config['official_name'],
+                "ratio_id": ratio_id,
+                "value": round(calculated_value, 2),
+                "unit": ratio_config.get('unit', ''),
+                "formula": formula,
+                "components": component_values,
+                "period": period,
+                "company": company_id
+            }
+            
+        except Exception as e:
+            logging.error(f"재무비율 계산 오류: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+    
+    def get_ratios_by_viewpoint(self, viewpoint_name: str) -> dict:
+        """
+        특정 분석 관점의 모든 재무비율 반환
+        
+        Args:
+            viewpoint_name: "수익성", "안정성", "활동성", "성장성"
+        
+        Returns:
+            {"found": True, "viewpoint": "수익성", "ratios": [...]}
+        """
+        viewpoint_name_lower = viewpoint_name.lower()
+        
+        # 1. Viewpoint ID 찾기
+        viewpoint_id = None
+        viewpoint_official_name = None
+        for vid, vdata in self.config['financial_ratios']['viewpoints'].items():
+            all_names = [vdata['name']] + vdata.get('aliases', [])
+            if any(viewpoint_name_lower == name.lower() for name in all_names):
+                viewpoint_id = vid
+                viewpoint_official_name = vdata['name']
+                break
+        
+        if not viewpoint_id:
+            return {"found": False, "message": f"'{viewpoint_name}' 관점을 찾을 수 없습니다."}
+        
+        # 2. 해당 viewpoint의 모든 ratios 수집
+        ratios = []
+        for rid, rdata in self.config['financial_ratios']['ratios'].items():
+            if rdata.get('viewpoint') == viewpoint_id:
+                ratios.append({
+                    "id": rid,
+                    "name": rdata['official_name'],
+                    "type": rdata['type'],
+                    "description": rdata.get('description'),
+                    "unit": rdata.get('unit')
+                })
+        
+        return {
+            "found": True,
+            "viewpoint": viewpoint_official_name,
+            "viewpoint_id": viewpoint_id,
+            "ratios": ratios,
+            "count": len(ratios)
+        }
+    
+    def get_definition(self, term: str) -> dict:
+        """
+        재무 용어의 정의를 config.json에서 조회
+        
+        Args:
+            term: "영업이익", "ROE", "부채비율" 등
+        
+        Returns:
+            {"found": True, "type": "account", "definition": {...}}
+        """
+        term_lower = term.lower()
+        
+        # 1. Accounts 검색
+        for aid, adata in self.config['entities']['accounts'].items():
+            all_names = [adata['official_name']] + adata.get('aliases', [])
+            if any(term_lower == name.lower() for name in all_names):
+                return {
+                    "found": True,
+                    "type": "account",
+                    "term": term,
+                    "official_name": adata['official_name'],
+                    "category": adata['category'],
+                    "description": adata.get('description', '설명 없음'),
+                    "aggregation": adata.get('aggregation'),
+                    "id": aid
+                }
+        
+        # 2. Financial Ratios 검색
+        for rid, rdata in self.config['financial_ratios']['ratios'].items():
+            all_names = [rdata['official_name']] + rdata.get('aliases', [])
+            if any(term_lower == name.lower() for name in all_names):
+                return {
+                    "found": True,
+                    "type": "ratio",
+                    "term": term,
+                    "official_name": rdata['official_name'],
+                    "viewpoint": rdata['viewpoint'],
+                    "description": rdata.get('description', '설명 없음'),
+                    "ratio_type": rdata['type'],
+                    "formula": rdata.get('formula_human'),
+                    "unit": rdata.get('unit'),
+                    "id": rid
+                }
+        
+        # 3. 못 찾음
+        return {
+            "found": False,
+            "message": f"'{term}'에 대한 정의를 config.json에서 찾을 수 없습니다. 일반 지식으로 답변하세요."
+        }
+    
     def general_knowledge_qa(self, question: str) -> str:
         """일반 재무/경영 지식 제공"""
         try:
@@ -1349,7 +1585,7 @@ Respond with ONLY one word: CORPORATE or SEGMENT"""
             return "CORPORATE"
     
     def _validate_query(self, query):
-        """Cypher 쿼리 사전 검증 (v3 동일)"""
+        """Cypher 쿼리 사전 검증 + available_data 체크"""
         warnings = []
         
         if "fs.year" in query or "fs.month" in query:
@@ -1360,6 +1596,33 @@ Respond with ONLY one word: CORPORATE or SEGMENT"""
         
         if "v.region" in query and "HAS_STATEMENT" in query and "FOR_SEGMENT" not in query:
             warnings.append("⚠️ CORPORATE 데이터에는 v.region 속성이 없습니다. 필터 제거 필요")
+        
+        # Phase 6: available_data 체크
+        import re
+        # 쿼리에서 회사 ID 추출
+        company_match = re.search(r"c\.id\s*=\s*'([^']+)'|c\.id\s*IN\s*\[([^\]]+)\]", query)
+        if company_match:
+            company_ids = []
+            if company_match.group(1):
+                company_ids = [company_match.group(1)]
+            else:
+                # IN [...] 형식
+                ids_str = company_match.group(2)
+                company_ids = [cid.strip().strip("'\"") for cid in ids_str.split(',')]
+            
+            # 각 회사의 available_data 체크
+            for cid in company_ids:
+                company_config = self.config['entities']['companies'].get(cid)
+                if company_config:
+                    avail_data = company_config.get('available_data', [])
+                    
+                    # BS 데이터 요청했는데 없는 경우
+                    if ':BS' in query and 'BS' not in avail_data:
+                        warnings.append(f"⚠️ {company_config.get('official_name', cid)}은(는) BS 데이터가 제공되지 않습니다.")
+                    
+                    # IS 데이터 요청했는데 없는 경우  
+                    if ':IS' in query and 'IS' not in avail_data:
+                        warnings.append(f"⚠️ {company_config.get('official_name', cid)}은(는) IS 데이터가 제공되지 않습니다.")
         
         return warnings
     
@@ -1577,6 +1840,23 @@ Respond with ONLY one word: CORPORATE or SEGMENT"""
                 for alias, account_id in entities["accounts"].items():
                     entity_context += f"- '{alias}' → Account ID: '{account_id}' (이 ID를 쿼리에 사용하세요!)\n"
             
+            # Phase 7: contextual_ids 추가 (SEGMENT 레벨 시)
+            if level == "SEGMENT":
+                contextual_id_info = {}
+                for cid, cdata in self.config['entities']['companies'].items():
+                    if 'contextual_ids' in cdata and 'segment_data' in cdata['contextual_ids']:
+                        contextual_id_info[cid] = {
+                            "use_id": cdata['contextual_ids']['segment_data'],
+                            "reason": "연결 재무제표 회사의 사업별 데이터는 별도 ID 사용"
+                        }
+                
+                if contextual_id_info:
+                    entity_context += "\n**🎯 Contextual ID Mapping (SEGMENT 데이터용):**\n"
+                    entity_context += "일부 회사는 사업별 데이터 조회 시 다른 ID를 사용합니다:\n"
+                    for cid, info in contextual_id_info.items():
+                        entity_context += f"- '{cid}' → Use '{info['use_id']}' for segment queries\n"
+                    entity_context += "\n"
+            
             # json.dumps 결과를 먼저 변수에 저장
             company_mapping_json = json.dumps(company_mapping_examples, ensure_ascii=False, indent=2)
             segment_mapping_json = json.dumps(segment_account_mapping, ensure_ascii=False, indent=2)
@@ -1655,11 +1935,14 @@ Step 2: 찾은 a.id를 실제 데이터 쿼리에 사용
             
             # 히스토리는 Chat Session이 자동 관리 (수동 추가 불필요)
             
-            # Tools (일반 지식 도구 추가)
+            # Tools (모든 도구 포함)
             tools = [
                 self.run_cypher_query,
                 self.data_visualization,
                 self.generate_downloadable_link,
+                self.calculate_financial_ratio,  # Phase 3: 재무비율 계산
+                self.get_ratios_by_viewpoint,    # Phase 5: 관점별 비율 목록
+                self.get_definition,             # Phase 4: 용어 정의
                 self.general_knowledge_qa
             ]
             
