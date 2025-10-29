@@ -2760,7 +2760,9 @@ Now generate your COMPLETE 4-part answer:
             print("\n[연결종료] Neo4j 연결 종료")
             logging.info("Neo4j 연결 종료")
 
-if __name__ == "__main__":
+'''
+# CLI interface removed - use main_api.py for API server
+# For standalone testing, create a separate test script
     print("="*70)
     print("  GMIS Agent v4 Final - Knowledge Graph v5")
     print("="*70)
@@ -2870,3 +2872,4 @@ if __name__ == "__main__":
             agent.close()
         print("\nAgent v4를 종료합니다.")
         input("Press Enter to close...")  # 터미널 유지
+'''
