@@ -2416,6 +2416,45 @@ Present this information to the user in a clear and helpful way. No special form
                             print(f"[DEBUG] 컬럼: {columns}")
                             logging.info(f"Python에서 {record_count}개 레코드 사전 집계 시작 (메모리: {mem_usage:.2f} MB, 컬럼: {columns})")
                             
+                            # 컬럼명 표준화 (LLM이 다양한 별칭 사용 가능)
+                            # 1. 동적 감지
+                            company_col = None
+                            if 'c.name' in df.columns:
+                                company_col = 'c.name'
+                            elif 'company_name' in df.columns:
+                                company_col = 'company_name'
+                            elif 'company' in df.columns:
+                                company_col = 'company'
+                            
+                            account_col = None
+                            if 'a.name' in df.columns:
+                                account_col = 'a.name'
+                            elif 'account_name' in df.columns:
+                                account_col = 'account_name'
+                            elif 'account' in df.columns:
+                                account_col = 'account'
+                            
+                            # 2. 표준 이름으로 rename (코드 단순화)
+                            rename_mapping = {}
+                            if company_col and company_col != 'c.name':
+                                rename_mapping[company_col] = 'c.name'
+                            if account_col and account_col != 'a.name':
+                                rename_mapping[account_col] = 'a.name'
+                            
+                            # 기타 시간 관련 컬럼도 표준화
+                            if 'year' in df.columns and 'p.year' not in df.columns:
+                                rename_mapping['year'] = 'p.year'
+                            if 'month' in df.columns and 'p.month' not in df.columns:
+                                rename_mapping['month'] = 'p.month'
+                            if 'value' in df.columns and 'v.value' not in df.columns and 'plan' not in df.columns:
+                                rename_mapping['value'] = 'v.value'
+                            
+                            if rename_mapping:
+                                df.rename(columns=rename_mapping, inplace=True)
+                                logging.info(f"컬럼명 표준화 완료: {rename_mapping}")
+                            else:
+                                logging.info(f"컬럼명이 이미 표준 형식입니다")
+                            
                             # 빈 데이터 체크
                             if record_count == 0:
                                 print("[DEBUG] 레코드가 없어 사전 집계 건너뜀.")
