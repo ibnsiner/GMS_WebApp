@@ -52,7 +52,7 @@
       "전력CIC": { "official_name": "전력CIC", "type": "CIC", "parent_company": "ELECTRIC", "aliases": ["전력 CIC", "전력"], "groups": [], "available_data": ["IS"] },
       "자동화CIC": { "official_name": "자동화CIC", "type": "CIC", "parent_company": "ELECTRIC", "aliases": ["자동화 CIC", "자동화"], "groups": [], "available_data": ["IS"] },
       "MnM": { "official_name": "LS MnM", "file_name_id": "LS MnM", "aliases": ["엠앤엠", "앰엔엠", "mnm", "동제련"], "groups": ["manufacturing_4", "ls_affiliates", "adjusted_oi_companies"], "available_data": ["IS", "BS"] },
-      "엠트론": { "official_name": "LS엠트론", "file_name_id": "LS엠트론", "aliases": ["앰트론", "mtron"], "groups": ["manufacturing_4"], "available_data": ["IS", "BS"] },
+      "엠트론": { "official_name": "LS엠트론", "file_name_id": "LS엠트론", "aliases": ["엠트론", "앰트론", "mtron"], "groups": ["manufacturing_4"], "available_data": ["IS", "BS"] },
       "E1": { "official_name": "E1", "file_name_id": "E1", "aliases": ["e1", "이원"], "groups": ["adjusted_oi_companies"], "available_data": ["IS", "BS"] },
       "가온": { "official_name": "가온전선", "file_name_id": "가온전선", "aliases": ["가온", "가온 전선"], "groups": [], "available_data": ["IS", "BS"] },
       "I&D": { "official_name": "LS아이앤디", "file_name_id": "LS아이앤디", "aliases": ["아이앤디"], "groups": [], "available_data": ["IS", "BS"] },
