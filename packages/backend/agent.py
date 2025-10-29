@@ -1331,6 +1331,15 @@ Respond with ONLY one word: CORPORATE or SEGMENT"""
             if not is_follow_up:
                 print(f"[DEBUG] 엔티티 추출 중...")
                 entities = self._extract_entities(user_query)
+                
+                # 추출된 엔티티 로깅
+                if entities.get("groups"):
+                    print(f"[추출] 그룹: {entities['groups']}")
+                    logging.info(f"추출된 그룹: {entities['groups']}")
+                if entities.get("companies"):
+                    print(f"[추출] 회사: {entities['companies']}")
+                    logging.info(f"추출된 회사: {entities['companies']}")
+                
                 print(f"[DEBUG] 레벨 판단 중...")
                 level = self._determine_level(user_query)
             else:
