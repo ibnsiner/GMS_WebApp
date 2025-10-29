@@ -949,40 +949,46 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             ax.yaxis.set_major_formatter(FuncFormatter(format_with_comma))
             
             # 추세선 추가 (선형 회귀)
-            if show_trendline and chart_type == 'line':
+            if show_trendline and chart_type == 'line' and 'v.value' in df.columns:
                 import numpy as np
-                # x축을 숫자로 변환 (month: 1-12)
-                x_numeric = df[x_col].values if x_col == 'p.month' else range(len(df))
                 
                 if not y_cols or y_cols == ['v.value']:
-                    if 'a.name' in df.columns and 'v.value' in df.columns:
+                    if 'a.name' in df.columns:
                         # 여러 계정이 있는 경우 각각 추세선
                         for idx, account in enumerate(df['a.name'].unique()):
-                            subset = df[df['a.name'] == account]
+                            subset = df[df['a.name'] == account].copy()
+                            # v.value_eok 재계산
+                            subset['v.value_eok'] = subset['v.value'].apply(convert_to_eok)
                             x_vals = subset[x_col].values
                             y_vals = subset['v.value_eok'].values
                             
-                            # 선형 회귀
-                            z = np.polyfit(x_vals, y_vals, 1)
-                            p = np.poly1d(z)
-                            
-                            # 추세선 그리기
-                            ax.plot(x_vals, p(x_vals), "--", 
-                                   color=colors[idx % len(colors)], 
-                                   linewidth=1.5, 
-                                   alpha=0.7,
-                                   label=f'{account} Trend')
+                            if len(x_vals) > 1:  # 최소 2개 이상의 포인트 필요
+                                # 선형 회귀
+                                z = np.polyfit(x_vals, y_vals, 1)
+                                p = np.poly1d(z)
+                                
+                                # 추세선 그리기
+                                ax.plot(x_vals, p(x_vals), "--", 
+                                       color=colors[idx % len(colors)], 
+                                       linewidth=1.5, 
+                                       alpha=0.6,
+                                       label=f'{translate_to_english(account)} Trend')
                     else:
                         # 단일 데이터
-                        y_vals = df['v.value_eok'].values
-                        z = np.polyfit(x_numeric, y_vals, 1)
-                        p = np.poly1d(z)
-                        ax.plot(x_numeric, p(x_numeric), "--", 
-                               color=colors[0], 
-                               linewidth=1.5, 
-                               alpha=0.7,
-                               label='Trend')
-                        ax.legend(fontsize=11, frameon=True, shadow=True, fancybox=True)
+                        df_copy = df.copy()
+                        df_copy['v.value_eok'] = df_copy['v.value'].apply(convert_to_eok)
+                        x_vals = df_copy[x_col].values
+                        y_vals = df_copy['v.value_eok'].values
+                        
+                        if len(x_vals) > 1:
+                            z = np.polyfit(x_vals, y_vals, 1)
+                            p = np.poly1d(z)
+                            ax.plot(x_vals, p(x_vals), "--", 
+                                   color=colors[0], 
+                                   linewidth=1.5, 
+                                   alpha=0.6,
+                                   label='Trend')
+                            ax.legend(fontsize=11, frameon=True, shadow=True, fancybox=True)
             
             plt.tight_layout()
             
