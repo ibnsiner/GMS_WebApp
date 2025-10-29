@@ -1193,19 +1193,38 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             for row in result['data']:
                 component_values[row['account_id']] = row['latest_value']
             
-            # 2. 공식 계산 (간단한 파서)
+            # 2. 공식 파싱 및 계산 (안전하고 견고한 방식)
             formula = ratio_config['formula_human']
-            
             # 예: "(당기순이익 / 자기자본_합계) * 100"
-            # 간단한 eval 방식 (안전하게 처리)
-            calc_formula = formula
-            for comp_id, value in component_values.items():
-                calc_formula = calc_formula.replace(comp_id, str(value))
             
+            # 공식에 있는 계정 ID를 실제 값으로 치환하기 위한 매핑 생성
+            # config의 official_name, aliases 등을 모두 고려하여 유연하게 매핑
+            value_map = {}
+            for comp_id, value in component_values.items():
+                account_config = self.config['entities']['accounts'].get(comp_id, {})
+                # 공식에 사용될 수 있는 모든 이름을 키로 사용
+                all_names = [account_config.get('official_name', comp_id)] + account_config.get('aliases', []) + [comp_id]
+                for name in all_names:
+                    # 공백 제거하여 매칭
+                    value_map[name.replace(" ", "")] = str(value)
+            
+            # 공식 문자열에서 계정 이름을 실제 값으로 치환
+            expr = formula.replace(" ", "")  # 공식에서도 공백 제거
+            for name, value in value_map.items():
+                expr = expr.replace(name, value)
+            
+            # 보안을 위해 안전한 eval 사용 (숫자와 기본 연산자만 허용)
             try:
-                calculated_value = eval(calc_formula)
-            except:
-                return {"status": "error", "message": "공식 계산 실패"}
+                # 안전한 문자만 있는지 확인
+                import re
+                if not re.match(r'^[0-9\.\+\-\*\/\(\)]+$', expr):
+                    return {"status": "error", "message": "공식에 허용되지 않은 문자가 포함되어 있습니다", "expression": expr}
+                
+                # eval로 계산 실행
+                calculated_value = eval(expr)
+                
+            except Exception as e:
+                return {"status": "error", "message": f"공식 계산 실패: {str(e)}", "expression": expr}
             
             return {
                 "status": "success",
