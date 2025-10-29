@@ -484,6 +484,18 @@ When a user mentions a group name (e.g., "제조4사"), refer to the **'Company 
 provided in the dynamic context at runtime. The context will give you the exact list of company IDs.
 DO NOT guess the members!
 
+**CRITICAL: How to use Company Groups in queries:**
+1. Look at the runtime context's "Company Groups" section
+2. Find the group name (e.g., "제조4사")
+3. Extract ALL company IDs from that group
+4. Use ALL of them in your WHERE clause
+
+Example for "제조4사" (from runtime context):
+- "제조4사": ["ELECTRIC (LS ELECTRIC)", "LSCNS_C (LS전선(연결))", "MnM (LS MnM)", "엠트론 (LS엠트론)"]
+- Extract IDs: ELECTRIC, LSCNS_C, MnM, 엠트론
+- Query: WHERE c.id IN ['ELECTRIC', 'LSCNS_C', 'MnM', '엠트론']
+- You MUST include ALL 4 companies!
+
 **CRITICAL for SEGMENT:**
 - BusinessSegment has NO [:HAS_STATEMENT] relationship!
 - Use [:FOR_SEGMENT] from Metric
@@ -1269,6 +1281,12 @@ Respond with ONLY one word: CORPORATE or SEGMENT"""
         """사용자 질문에서 엔티티를 추출하고 NLU로 매핑"""
         query_lower = user_query.lower()
         
+        # 그룹 추출 (우선 처리)
+        mentioned_groups = {}
+        for alias, group_id in self.nlu['group'].items():
+            if alias in query_lower:
+                mentioned_groups[alias] = group_id
+        
         # 회사 추출
         mentioned_companies = {}
         for alias, company_id in self.nlu['company'].items():
@@ -1282,6 +1300,7 @@ Respond with ONLY one word: CORPORATE or SEGMENT"""
                 mentioned_accounts[alias] = account_id
         
         return {
+            "groups": mentioned_groups,
             "companies": mentioned_companies,
             "accounts": mentioned_accounts
         }
@@ -1365,6 +1384,23 @@ Respond with ONLY one word: CORPORATE or SEGMENT"""
             
             # 추출된 엔티티 정보 (새 조회 시에만 필요)
             entity_context = ""
+            
+            # 그룹이 언급되었으면 해당 그룹의 회사 목록을 명시적으로 제공
+            if entities.get("groups"):
+                entity_context += "\n**🎯 사용자가 언급한 회사 그룹 (CRITICAL!):**\n"
+                for alias, group_id in entities["groups"].items():
+                    group_name = self.config.get('business_rules', {}).get('company_groups', {}).get(group_id, {}).get('name', group_id)
+                    # 해당 그룹의 모든 회사 ID 추출
+                    group_company_ids = []
+                    for company_id, company_data in self.config.get('entities', {}).get('companies', {}).items():
+                        if group_id in company_data.get('groups', []):
+                            group_company_ids.append(company_id)
+                    
+                    entity_context += f"- User said: '{alias}' → Group: '{group_name}'\n"
+                    entity_context += f"  **YOU MUST USE ALL THESE COMPANY IDs: {group_company_ids}**\n"
+                    entity_context += f"  Example: WHERE c.id IN {group_company_ids}\n"
+                    entity_context += f"  ⚠️ Do NOT omit any company! Include ALL {len(group_company_ids)} companies!\n\n"
+            
             if entities.get("companies"):
                 entity_context += "\n**🎯 사용자가 언급한 회사 (NLU 매핑 완료):**\n"
                 for alias, company_id in entities["companies"].items():
