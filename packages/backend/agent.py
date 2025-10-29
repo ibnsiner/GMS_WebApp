@@ -1405,6 +1405,10 @@ Respond with ONLY one word: CORPORATE or SEGMENT"""
                         if group_id in company_data.get('groups', []):
                             group_company_ids.append(company_id)
                     
+                    # 로깅으로 확인
+                    print(f"[그룹 매핑] '{alias}' → {group_company_ids}")
+                    logging.info(f"그룹 '{alias}' ({group_id})의 회사 목록: {group_company_ids}")
+                    
                     entity_context += f"- User said: '{alias}' → Group: '{group_name}'\n"
                     entity_context += f"  **YOU MUST USE ALL THESE COMPANY IDs: {group_company_ids}**\n"
                     entity_context += f"  Example: WHERE c.id IN {group_company_ids}\n"
