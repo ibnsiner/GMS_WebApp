@@ -475,6 +475,29 @@ To find the correct Account.id for segment data queries, use these methods in or
 **용어**: "사업 아이템" or "사업 항목" (NOT "사업 부문"!)
 ```
 
+**🚨 CRITICAL: Group Queries with Special Rules 🚨**
+
+When a user asks for data from a company group (e.g., "제조4사") AND some companies have special handling rules:
+
+**YOU MUST use this exact pattern to avoid omitting companies:**
+
+Step 1: Mentally divide the group into two parts:
+- **Normal Group:** Companies that use standard accounts
+- **Exception Group:** Companies with special rules (e.g., MnM uses '조정영업이익')
+
+Step 2: Construct WHERE clause with EXPLICIT OR logic:
+
+```cypher
+WHERE
+  -- Normal companies (list ALL of them explicitly!)
+  ( c.id IN ['LSCNS_C', 'ELECTRIC', '엠트론'] AND a.id IN ['매출액_합계', '영업이익', '당기순이익'] )
+  OR
+  -- Exception companies (handle separately)
+  ( c.id = 'MnM' AND a.id IN ['매출액_합계', '조정영업이익', '당기순이익'] )
+```
+
+**⚠️ CRITICAL:** When you create the "Normal Group" list, you MUST include ALL companies that are NOT in the exception group. Do NOT accidentally omit any company!
+
 **🏢 Company Groups:**
 When a user mentions a group name (e.g., "제조4사"), refer to the **'Company Groups' mapping** 
 provided in the dynamic context at runtime. The context will give you the exact list of company IDs.
@@ -584,6 +607,13 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
     
     def run_cypher_query(self, query: str) -> dict:
         """Neo4j Cypher 쿼리 실행 (환각 방지 강화)"""
+        
+        # 디버깅: 실제 실행되는 쿼리 출력
+        print("="*80)
+        print("Executing Cypher Query:")
+        print(query)
+        print("="*80)
+        
         try:
             with self.driver.session() as session:
                 result = session.run(query)
@@ -1658,6 +1688,18 @@ Example:
                     if tool_name == "run_cypher_query":
                         query_text = tool_args.get('query', '')
                         print(f"[Query]\n{query_text}\n")
+                        
+                        # WHERE c.id IN 부분을 로깅해서 엠트론 포함 여부 확인
+                        if "WHERE c.id IN" in query_text or "WHERE c.id =" in query_text:
+                            import re
+                            where_match = re.search(r"WHERE c\.id (?:IN\s*\[(.*?)\]|=\s*'(.*?)')", query_text)
+                            if where_match:
+                                company_ids = where_match.group(1) or where_match.group(2)
+                                print(f"[확인] 쿼리에 포함된 회사: {company_ids}")
+                                logging.warning(f"쿼리에 사용된 회사 ID: {company_ids}")
+                                if '엠트론' not in company_ids:
+                                    print(f"[경고] 엠트론이 쿼리에서 누락되었습니다!")
+                                    logging.error("엠트론이 WHERE 절에 포함되지 않음!")
                         
                         # 쿼리 사전 검증 (v3)
                         warnings = self._validate_query(query_text)
