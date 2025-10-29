@@ -1470,16 +1470,60 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 
                 return content_blocks
         
-        # 1. '### 숫자.' 패턴을 기준으로 전체 답변을 섹션으로 분리
-        # 제목에 구애받지 않고 모든 섹션 인식 (유연성 향상)
+        # 1. '### 숫자.' 패턴을 기준으로 전체 답변을 섹션으로 분리 (유연성)
         sections = re.split(r'\n(?=###\s*\d+\.\s*)', final_answer.strip())
         
         for section in sections:
-            section = section.strip()
-            if section:
-                # 각 섹션을 텍스트 블록으로 추가
-                # ReactMarkdown이 마크다운 테이블, 리스트 등을 모두 렌더링함
-                content_blocks.append({"type": "text", "content": section})
+            section_content = section.strip()
+            if not section_content:
+                continue
+            
+            # 2. 각 섹션이 테이블인지 검사 (지능)
+            lines = [line.strip() for line in section_content.split('\n') if line.strip()]
+            
+            # 테이블 판단: 최소 3줄, 첫 줄에 |, 두 번째 줄에 ---, 나머지에도 |
+            is_table_section = False
+            if len(lines) >= 3:
+                if '|' in lines[0] and '---' in lines[1]:
+                    if any('|' in line for line in lines[2:]):
+                        is_table_section = True
+            
+            if is_table_section:
+                # 3-A. 테이블이면 구조화된 JSON으로 변환
+                try:
+                    # 테이블 시작 인덱스 찾기 (제목 제외)
+                    table_start = 0
+                    for i, line in enumerate(lines):
+                        if '|' in line and i < len(lines) - 1 and '---' in lines[i+1]:
+                            table_start = i
+                            break
+                    
+                    # 헤더와 행 파싱
+                    columns = [h.strip() for h in lines[table_start].strip('|').split('|')]
+                    rows = []
+                    for line in lines[table_start+2:]:  # 헤더와 구분자 건너뛰기
+                        if '|' in line:
+                            rows.append([r.strip() for r in line.strip('|').split('|')])
+                    
+                    # InteractiveTable을 위한 구조
+                    content_blocks.append({
+                        "type": "table",
+                        "content": {"columns": columns, "rows": rows}
+                    })
+                    
+                    # 테이블 위의 제목이 있으면 별도 텍스트로 추가
+                    if table_start > 0:
+                        prefix = '\n'.join(lines[:table_start])
+                        if prefix.strip():
+                            # 제목을 테이블 앞에 추가
+                            content_blocks.insert(-1, {"type": "text", "content": prefix.strip()})
+                    
+                except Exception as e:
+                    logging.warning(f"테이블 파싱 실패, 텍스트로 처리: {e}")
+                    content_blocks.append({"type": "text", "content": section_content})
+            else:
+                # 3-B. 테이블 아니면 텍스트로
+                content_blocks.append({"type": "text", "content": section_content})
         
         # 2. 안내 메시지 (💡로 시작) - 별도 처리
         notice_match = re.search(r"(💡.*?)(?=\n\n|\Z)", final_answer, re.DOTALL)
