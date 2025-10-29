@@ -9,14 +9,12 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 
 # --- 로깅 설정 ---
-# 파일과 콘솔 양쪽에 로그 출력 (터미널 종료 시에도 로그 확인 가능!)
-log_filename = f"agent_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+# 콘솔에만 로그 출력 (파일 생성 안 함)
 logging.basicConfig(
-    level=logging.INFO,  # DEBUG → INFO로 변경 (matplotlib 로그 차단)
+    level=logging.INFO,
     format='[%(asctime)s][%(levelname)s] %(message)s',
     handlers=[
-        logging.FileHandler(log_filename, mode='w', encoding='utf-8'),
-        logging.StreamHandler()  # 콘솔 출력도 유지
+        logging.StreamHandler()  # 콘솔 출력만
     ]
 )
 
@@ -24,8 +22,6 @@ logging.basicConfig(
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
 logging.getLogger('matplotlib.font_manager').setLevel(logging.WARNING)
 logging.getLogger('PIL').setLevel(logging.WARNING)
-
-print(f"[시스템] 로그 파일: {log_filename}")
 
 # --- API 키 설정 ---
 GOOGLE_AI_API_KEY = "AIzaSyB-8Bz4sHoYxz88LKT7rWpF298C5vFCj4s"
