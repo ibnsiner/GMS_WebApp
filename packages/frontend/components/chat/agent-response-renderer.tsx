@@ -50,6 +50,18 @@ export function AgentResponseRenderer({ content }: AgentResponseRendererProps) {
               strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
               code: ({ children }) => <code className="bg-muted px-1 py-0.5 rounded text-xs">{children}</code>,
               blockquote: ({ children }) => <blockquote className="border-l-4 border-primary pl-4 italic text-muted-foreground">{children}</blockquote>,
+              table: ({ children }) => (
+                <div className="overflow-x-auto my-4">
+                  <table className="min-w-full text-sm border-collapse border border-border">
+                    {children}
+                  </table>
+                </div>
+              ),
+              thead: ({ children }) => <thead className="bg-muted/30">{children}</thead>,
+              tbody: ({ children }) => <tbody>{children}</tbody>,
+              tr: ({ children }) => <tr className="border-t border-border">{children}</tr>,
+              th: ({ children }) => <th className="px-4 py-2 text-left font-medium border border-border whitespace-nowrap">{children}</th>,
+              td: ({ children }) => <td className="px-4 py-2 border border-border whitespace-nowrap">{children}</td>,
             }}
           >
             {content.content}
