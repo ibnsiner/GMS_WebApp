@@ -395,9 +395,11 @@ class GMISKnowledgeGraphETL:
         for company_id, data in self.config['entities']['companies'].items():
             node_label = "CIC" if data.get('type') == 'CIC' else "Company"
             tx.run(
-                f"MERGE (c:{node_label} {{id: $id}}) SET c.name = $name, c.available_data = $avail_data",
+                f"MERGE (c:{node_label} {{id: $id}}) SET c.name = $name, c.official_name = $official_name, c.file_name_id = $file_name_id, c.available_data = $avail_data",
                 id=company_id,
                 name=data['official_name'],
+                official_name=data['official_name'],
+                file_name_id=data.get('file_name_id', company_id),
                 avail_data=data.get('available_data', ['IS', 'BS'])
             )
             for alias in [data['official_name']] + data.get('aliases', []):
