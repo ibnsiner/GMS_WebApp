@@ -1605,8 +1605,17 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
         try:
             structured_content = self._parse_final_answer_to_structured_format(final_answer)
             
-            # 파싱 결과 로깅
+            # 파싱 결과 상세 로깅
             logging.info(f"파싱된 컨텐츠 블록 수: {len(structured_content)}")
+            for i, block in enumerate(structured_content):
+                block_type = block.get('type', 'unknown')
+                if block_type == 'table':
+                    cols = len(block.get('content', {}).get('columns', []))
+                    rows = len(block.get('content', {}).get('rows', []))
+                    logging.info(f"  블록 {i}: type=table, columns={cols}, rows={rows}")
+                else:
+                    content_len = len(str(block.get('content', '')))
+                    logging.info(f"  블록 {i}: type={block_type}, length={content_len}")
             
             # 파싱 결과가 하나의 텍스트 블록뿐이고, 원본에 테이블이 있다면 파싱 실패로 간주
             if len(structured_content) == 1 and structured_content[0]['type'] == 'text':
