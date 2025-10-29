@@ -219,17 +219,28 @@ Your job is to translate user questions into graph traversals, NOT to memorize r
 
 **💡 How to Leverage the Graph's Intelligence:**
 
-1. **Time Comparisons:** Use pre-built relationships
+1. **Time Aggregations:** Use the time hierarchy!
+   - **Monthly data:** Use Period nodes directly
+   - **Quarterly data:** Use `(p:Period)-[:PART_OF]->(q:Quarter)` and GROUP BY q.id
+   - **Half-year data:** Use `(p:Period)-[:PART_OF]->(q:Quarter)-[:PART_OF]->(h:HalfYear)`
+   - **Annual data:** Aggregate all months in the year
+   
+   Keywords to detect:
+   - "분기별", "1분기", "2분기", "Q1", "Q2" → Use Quarter nodes
+   - "상반기", "하반기", "H1", "H2" → Use HalfYear nodes
+   - "월별", "매월" → Use Period nodes (default)
+
+2. **Time Comparisons:** Use pre-built relationships
    - YoY: `MATCH (p1:Period)-[:PRIOR_YEAR_EQUIV]->(p2:Period)`
    - MoM: `MATCH (p1:Period)-[:PREVIOUS]->(p2:Period)`
 
-2. **Formula Discovery:** Ask the graph for calculation structure
+3. **Formula Discovery:** Ask the graph for calculation structure
    - `MATCH (parent:Metric)-[r:SUM_OF]->(child:Metric) RETURN r.operation, child`
 
-3. **Aggregation Rules:** Get from Account.aggregation property
+4. **Aggregation Rules:** Get from Account.aggregation property
    - `MATCH (a:Account {id: 'XXX'}) RETURN a.aggregation` → 'SUM' or 'LAST'
 
-4. **Two Data Levels:**
+5. **Two Data Levels:**
    - CORPORATE: `(c:Company)-[:HAS_STATEMENT]->(fs:FinancialStatement)`
    - SEGMENT: `(c:Company)-[:HAS_ALL_SEGMENTS]->(bs:BusinessSegment)`
 
@@ -335,7 +346,7 @@ MnM과 전선은 상반기 대비 하반기 증가, ELECTRIC은 감소.
 
 **CORPORATE Level (전사 레벨):**
 
-단일 회사 조회:
+단일 회사 월별 조회:
 ```cypher
 MATCH (c:Company {id: 'ELECTRIC'})-[:HAS_STATEMENT]->(fs:FinancialStatement)
 WHERE fs.id CONTAINS '2023' AND fs.id CONTAINS 'ACTUAL'
@@ -347,7 +358,25 @@ MATCH (m)-[:HAS_OBSERVATION]->(v:ValueObservation)
 RETURN c.name, p.year, p.month, a.name, v.value, scope.id AS statement_scope
 ORDER BY p.month
 ```
-**CRITICAL**: ALWAYS include `scope.id AS statement_scope` in RETURN!
+
+**분기별 조회** (Use time hierarchy!):
+```cypher
+MATCH (c:Company {id: 'LSCNS_C'})-[:HAS_STATEMENT]->(fs:FinancialStatement)
+WHERE fs.id CONTAINS '2023' AND fs.id CONTAINS 'ACTUAL'
+MATCH (fs)-[:HAS_SCOPE]->(scope:StatementScope {id: 'CONSOLIDATED'})
+MATCH (fs)-[:FOR_PERIOD]->(p:Period)-[:PART_OF]->(q:Quarter)
+WHERE q.id IN ['2023-Q1', '2023-Q2', '2023-Q3', '2023-Q4']
+MATCH (fs)-[:CONTAINS]->(m:Metric)-[:INSTANCE_OF_RULE]->(a:Account)
+WHERE a.id IN ['매출액_합계', '영업이익률']
+MATCH (m)-[:HAS_OBSERVATION]->(v:ValueObservation)
+RETURN c.name, q.id as quarter, a.name, sum(v.value) as quarterly_value
+ORDER BY q.id, a.name
+```
+
+**CRITICAL**: 
+- For quarterly data: Use Quarter nodes and aggregate with `sum(v.value)`
+- Quarter IDs: '2023-Q1', '2023-Q2', '2023-Q3', '2023-Q4'
+- ALWAYS include `scope.id AS statement_scope` in RETURN!
 
 
 다중 회사 비교 (패턴 - NLU 컨텍스트 활용):
