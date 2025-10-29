@@ -57,14 +57,14 @@ export function InteractiveTable({ data }: InteractiveTableProps) {
         </Button>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto max-w-full">
+        <table className="text-sm min-w-full">
           <thead className="bg-muted/30">
             <tr>
               {data.columns.map((column, idx) => (
                 <th
                   key={idx}
-                  className="px-4 py-3 text-left font-medium text-foreground cursor-pointer hover:bg-muted/50 transition-colors"
+                  className="px-4 py-3 text-left font-medium text-foreground cursor-pointer hover:bg-muted/50 transition-colors whitespace-nowrap"
                   onClick={() => handleSort(idx)}
                 >
                   <div className="flex items-center gap-2">
@@ -79,7 +79,7 @@ export function InteractiveTable({ data }: InteractiveTableProps) {
             {sortedRows.map((row, rowIdx) => (
               <tr key={rowIdx} className="border-t border-border hover:bg-muted/20 transition-colors even:bg-muted/10">
                 {row.map((cell, cellIdx) => (
-                  <td key={cellIdx} className="px-4 py-3 text-foreground">
+                  <td key={cellIdx} className="px-4 py-3 text-foreground whitespace-nowrap">
                     {cell}
                   </td>
                 ))}
