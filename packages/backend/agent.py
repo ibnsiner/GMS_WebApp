@@ -1434,7 +1434,8 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
     
     def _parse_final_answer_to_structured_format(self, final_answer: str):
         """
-        최종 마크다운 답변을 프론트엔드가 요구하는 JSON 구조로 파싱합니다.
+        최종 마크다운 답변을 프론트엔드가 요구하는 JSON 구조로 유연하게 파싱합니다.
+        '### 숫자. 제목' 형식의 모든 섹션을 인식합니다.
         """
         import re
         
@@ -1460,55 +1461,25 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 
                 return content_blocks
         
-        # 1. 요약 (### 1. 요약)
-        summary_match = re.search(r"###\s*1\.\s*요약\s*\n(.*?)(?=\n###|\Z)", final_answer, re.DOTALL)
-        if summary_match:
-            content_blocks.append({"type": "text", "content": summary_match.group(1).strip()})
-
-        # 2. 집계 데이터 (### 2. 집계 데이터) - 테이블 파싱
-        table_match = re.search(r"###\s*2\.\s*집계 데이터\s*\n(.*?)(?=\n###|\Z)", final_answer, re.DOTALL)
-        if table_match:
-            table_md = table_match.group(1).strip()
-            lines = [line.strip() for line in table_md.split('\n') if line.strip()]
-            if len(lines) >= 2 and '|' in lines[0] and '---' in lines[1]:
-                columns = [h.strip() for h in lines[0].strip('|').split('|')]
-                rows = []
-                for line in lines[2:]:
-                    rows.append([r.strip() for r in line.strip('|').split('|')])
-                
-                content_blocks.append({
-                    "type": "table", 
-                    "content": {"columns": columns, "rows": rows}
-                })
-
-        # 3. 월별 상세 (### 3. 월별 상세) - 테이블로 파싱
-        details_match = re.search(r"###\s*3\.\s*월별\s+(?:상세|비교|데이터).*?\n(.*?)(?=\n###|\Z)", final_answer, re.DOTALL)
-        if details_match:
-            details_md = details_match.group(1).strip()
-            lines = [line.strip() for line in details_md.split('\n') if line.strip()]
-            if len(lines) >= 2 and '|' in lines[0] and '---' in lines[1]:
-                columns = [h.strip() for h in lines[0].strip('|').split('|')]
-                rows = []
-                for line in lines[2:]:
-                    rows.append([r.strip() for r in line.strip('|').split('|')])
-                
-                content_blocks.append({
-                    "type": "table",
-                    "content": {"columns": columns, "rows": rows}
-                })
-            else:
-                # 테이블 형식이 아니면 텍스트로 추가
-                content_blocks.append({"type": "text", "content": f"### 3. 월별 상세\n{details_md}"})
-
-        # 4. 인사이트 (### 4. 인사이트)
-        insight_match = re.search(r"###\s*4\.\s*인사이트\s*\n(.*?)(?=\n💡|\Z)", final_answer, re.DOTALL)
-        if insight_match:
-            content_blocks.append({"type": "text", "content": insight_match.group(1).strip()})
-
-        # 5. 안내 메시지 (💡로 시작)
+        # 1. '### 숫자.' 패턴을 기준으로 전체 답변을 섹션으로 분리
+        # 제목에 구애받지 않고 모든 섹션 인식 (유연성 향상)
+        sections = re.split(r'\n(?=###\s*\d+\.\s*)', final_answer.strip())
+        
+        for section in sections:
+            section = section.strip()
+            if section:
+                # 각 섹션을 텍스트 블록으로 추가
+                # ReactMarkdown이 마크다운 테이블, 리스트 등을 모두 렌더링함
+                content_blocks.append({"type": "text", "content": section})
+        
+        # 2. 안내 메시지 (💡로 시작) - 별도 처리
         notice_match = re.search(r"(💡.*?)(?=\n\n|\Z)", final_answer, re.DOTALL)
         if notice_match:
-            content_blocks.append({"type": "notice", "content": notice_match.group(1).strip()})
+            # 이미 텍스트 블록에 포함되었을 수 있으므로, 중복 체크
+            notice_text = notice_match.group(1).strip()
+            # 마지막 블록에 이미 포함되어 있지 않으면 추가
+            if not content_blocks or notice_text not in content_blocks[-1].get("content", ""):
+                content_blocks.append({"type": "notice", "content": notice_text})
         
         # 파싱된 블록이 없으면, 전체 답변을 단일 텍스트 블록으로 반환
         if not content_blocks:
