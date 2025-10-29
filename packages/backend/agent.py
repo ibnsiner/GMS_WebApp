@@ -535,10 +535,11 @@ Example for "제조4사" (from runtime context):
 
 **Tools:**
 - run_cypher_query(query: str) - LS Group 데이터 조회
-- data_visualization(chart_type, title, x_col='p.month', y_cols=['v.value'], company_filter=None, account_filter=None) - 차트 생성
+- data_visualization(chart_type, title, x_col='p.month', y_cols=['v.value'], company_filter=None, account_filter=None, show_trendline=False) - 차트 생성
   * data parameter는 생략 (자동으로 캐시된 데이터 사용)
   * company_filter: 회사명 필터 (예: "전선", "ELECTRIC")
   * account_filter: 계정명 필터 (예: "매출", "영업이익")
+  * show_trendline: True면 선형 회귀 추세선 추가 (line chart only)
 - generate_downloadable_link(data, file_name, file_type) - CSV/JSON 저장
 - general_knowledge_qa(question: str) - 재무/경영 지식 제공
 
@@ -651,7 +652,7 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 "original_query": query
             }
     
-    def data_visualization(self, data: list = None, chart_type: str = 'bar', title: str = '', x_col: str = '', y_cols: list = None, company_filter: str = None, account_filter: str = None, return_base64: bool = True) -> dict:
+    def data_visualization(self, data: list = None, chart_type: str = 'bar', title: str = '', x_col: str = '', y_cols: list = None, company_filter: str = None, account_filter: str = None, show_trendline: bool = False, return_base64: bool = True) -> dict:
         """
         차트 생성 및 PNG 저장 (필터링 기능 강화)
         - company_filter: 특정 회사 데이터만 필터링
@@ -756,8 +757,17 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 result = re.sub(r'\s+', ' ', result).strip()
                 return result
             
-            # 전문적인 색상 팔레트
-            colors = ['#2563eb', '#dc2626', '#16a34a', '#ca8a04', '#9333ea', '#0891b2']
+            # 세련된 색상 팔레트 (채도 조정)
+            colors = [
+                '#4f46e5',  # Indigo
+                '#ef4444',  # Red
+                '#10b981',  # Emerald
+                '#f59e0b',  # Amber
+                '#8b5cf6',  # Violet
+                '#06b6d4',  # Cyan
+                '#ec4899',  # Pink
+                '#14b8a6'   # Teal
+            ]
             
             # [핵심 수정 2] y_cols를 동적으로 설정하여 여러 계정 그리기 지원
             if not y_cols or y_cols == ['v.value']:
@@ -772,22 +782,27 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                         
                         if chart_type == 'line':
                             line = ax.plot(subset[x_col], subset['v.value_eok'], 
-                                   marker='o', label=account_en, linewidth=2.5, 
-                                   markersize=8, color=color)
-                            # 데이터 포인트 위에 값 표시
+                                   marker='o', label=account_en, linewidth=1.8, 
+                                   markersize=6, color=color, alpha=0.9)
+                            # 데이터 포인트 위에 값 표시 (반투명 배경)
                             for x, y in zip(subset[x_col], subset['v.value_eok']):
                                 ax.annotate(f'{int(y):,}', 
                                           (x, y), 
                                           textcoords="offset points",
-                                          xytext=(0, 10),
+                                          xytext=(0, 8),
                                           ha='center',
-                                          fontsize=9,
-                                          color=color,
-                                          fontweight='bold')
+                                          fontsize=8,
+                                          color='#1f2937',
+                                          fontweight='600',
+                                          bbox=dict(boxstyle='round,pad=0.3', 
+                                                   facecolor='white', 
+                                                   edgecolor=color,
+                                                   alpha=0.8,
+                                                   linewidth=1))
                         elif chart_type == 'bar':
                             bars = ax.bar(subset[x_col], subset['v.value_eok'], 
-                                  label=account_en, alpha=0.85, color=color, edgecolor='white', linewidth=1.5)
-                            # 바 위에 값 표시
+                                  label=account_en, alpha=0.85, color=color, edgecolor='white', linewidth=1.2)
+                            # 바 위에 값 표시 (반투명 배경)
                             for bar in bars:
                                 height = bar.get_height()
                                 ax.annotate(f'{int(height):,}',
@@ -796,8 +811,14 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                                           textcoords="offset points",
                                           ha='center', 
                                           va='bottom',
-                                          fontsize=9,
-                                          fontweight='bold')
+                                          fontsize=8,
+                                          color='#1f2937',
+                                          fontweight='600',
+                                          bbox=dict(boxstyle='round,pad=0.3', 
+                                                   facecolor='white', 
+                                                   edgecolor=color,
+                                                   alpha=0.8,
+                                                   linewidth=1))
                     if len(unique_accounts) > 1:
                         ax.legend(fontsize=11, frameon=True, shadow=True, fancybox=True)
                 else:
@@ -805,21 +826,26 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                     df['v.value_eok'] = df['v.value'].apply(convert_to_eok)
                     if chart_type == 'line':
                         ax.plot(df[x_col], df['v.value_eok'], marker='o', 
-                               linewidth=2.5, markersize=8, color=colors[0])
-                        # 데이터 포인트 위에 값 표시
+                               linewidth=1.8, markersize=6, color=colors[0], alpha=0.9)
+                        # 데이터 포인트 위에 값 표시 (반투명 배경)
                         for x, y in zip(df[x_col], df['v.value_eok']):
                             ax.annotate(f'{int(y):,}', 
                                       (x, y), 
                                       textcoords="offset points",
-                                      xytext=(0, 10),
+                                      xytext=(0, 8),
                                       ha='center',
-                                      fontsize=9,
-                                      color=colors[0],
-                                      fontweight='bold')
+                                      fontsize=8,
+                                      color='#1f2937',
+                                      fontweight='600',
+                                      bbox=dict(boxstyle='round,pad=0.3', 
+                                               facecolor='white', 
+                                               edgecolor=colors[0],
+                                               alpha=0.8,
+                                               linewidth=1))
                     elif chart_type == 'bar':
                         bars = ax.bar(df[x_col], df['v.value_eok'], 
-                              alpha=0.85, color=colors[0], edgecolor='white', linewidth=1.5)
-                        # 바 위에 값 표시
+                              alpha=0.85, color=colors[0], edgecolor='white', linewidth=1.2)
+                        # 바 위에 값 표시 (반투명 배경)
                         for bar in bars:
                             height = bar.get_height()
                             ax.annotate(f'{int(height):,}',
@@ -828,8 +854,14 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                                       textcoords="offset points",
                                       ha='center', 
                                       va='bottom',
-                                      fontsize=9,
-                                      fontweight='bold')
+                                      fontsize=8,
+                                      color='#1f2937',
+                                      fontweight='600',
+                                      bbox=dict(boxstyle='round,pad=0.3', 
+                                               facecolor='white', 
+                                               edgecolor=colors[0],
+                                               alpha=0.8,
+                                               linewidth=1))
             else:
                 # y_cols가 명시적으로 주어지면 기존 방식대로 그림
                 for idx, y_col in enumerate(y_cols):
@@ -838,21 +870,26 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                     
                     if chart_type == 'line':
                         ax.plot(df[x_col], df[y_col], marker='o', label=y_col_en,
-                               linewidth=2.5, markersize=8, color=color)
-                        # 데이터 포인트 위에 값 표시
+                               linewidth=1.8, markersize=6, color=color, alpha=0.9)
+                        # 데이터 포인트 위에 값 표시 (반투명 배경)
                         for x, y in zip(df[x_col], df[y_col]):
                             ax.annotate(f'{int(y):,}', 
                                       (x, y), 
                                       textcoords="offset points",
-                                      xytext=(0, 10),
+                                      xytext=(0, 8),
                                       ha='center',
-                                      fontsize=9,
-                                      color=color,
-                                      fontweight='bold')
+                                      fontsize=8,
+                                      color='#1f2937',
+                                      fontweight='600',
+                                      bbox=dict(boxstyle='round,pad=0.3', 
+                                               facecolor='white', 
+                                               edgecolor=color,
+                                               alpha=0.8,
+                                               linewidth=1))
                     elif chart_type == 'bar':
                         bars = ax.bar(df[x_col], df[y_col], label=y_col_en, 
-                              alpha=0.85, color=color, edgecolor='white', linewidth=1.5)
-                        # 바 위에 값 표시
+                              alpha=0.85, color=color, edgecolor='white', linewidth=1.2)
+                        # 바 위에 값 표시 (반투명 배경)
                         for bar in bars:
                             height = bar.get_height()
                             ax.annotate(f'{int(height):,}',
@@ -861,8 +898,14 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                                       textcoords="offset points",
                                       ha='center', 
                                       va='bottom',
-                                      fontsize=9,
-                                      fontweight='bold')
+                                      fontsize=8,
+                                      color='#1f2937',
+                                      fontweight='600',
+                                      bbox=dict(boxstyle='round,pad=0.3', 
+                                               facecolor='white', 
+                                               edgecolor=color,
+                                               alpha=0.8,
+                                               linewidth=1))
                 if len(y_cols) > 1:
                     ax.legend(fontsize=11, frameon=True, shadow=True, fancybox=True)
 
@@ -891,6 +934,42 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             def format_with_comma(x, p):
                 return f'{int(x):,}'
             ax.yaxis.set_major_formatter(FuncFormatter(format_with_comma))
+            
+            # 추세선 추가 (선형 회귀)
+            if show_trendline and chart_type == 'line':
+                import numpy as np
+                # x축을 숫자로 변환 (month: 1-12)
+                x_numeric = df[x_col].values if x_col == 'p.month' else range(len(df))
+                
+                if not y_cols or y_cols == ['v.value']:
+                    if 'a.name' in df.columns and 'v.value' in df.columns:
+                        # 여러 계정이 있는 경우 각각 추세선
+                        for idx, account in enumerate(df['a.name'].unique()):
+                            subset = df[df['a.name'] == account]
+                            x_vals = subset[x_col].values
+                            y_vals = subset['v.value_eok'].values
+                            
+                            # 선형 회귀
+                            z = np.polyfit(x_vals, y_vals, 1)
+                            p = np.poly1d(z)
+                            
+                            # 추세선 그리기
+                            ax.plot(x_vals, p(x_vals), "--", 
+                                   color=colors[idx % len(colors)], 
+                                   linewidth=1.5, 
+                                   alpha=0.7,
+                                   label=f'{account} Trend')
+                    else:
+                        # 단일 데이터
+                        y_vals = df['v.value_eok'].values
+                        z = np.polyfit(x_numeric, y_vals, 1)
+                        p = np.poly1d(z)
+                        ax.plot(x_numeric, p(x_numeric), "--", 
+                               color=colors[0], 
+                               linewidth=1.5, 
+                               alpha=0.7,
+                               label='Trend')
+                        ax.legend(fontsize=11, frameon=True, shadow=True, fancybox=True)
             
             plt.tight_layout()
             
@@ -1570,7 +1649,8 @@ User's request: "{user_query}"
        x_col='p.month',  # Time axis
        y_cols=['v.value'],  # Value axis
        company_filter='회사명',  # IMPORTANT! Extract from user request
-       account_filter='계정명'   # IMPORTANT! Extract from user request
+       account_filter='계정명',   # IMPORTANT! Extract from user request
+       show_trendline=True  # If user asks for "추세선", "trendline", "회귀선"
    )
    ```
 
