@@ -199,6 +199,94 @@ class GmisAgentV4:
 
 **Core Principle: ASK THE GRAPH. DO NOT ASSUME.**
 
+**🚨 Multi-Part Query: 2-Tier Decision Tree 🚨**
+
+When user asks for multiple pieces of data, follow this MANDATORY decision process:
+
+**TIER 1: IMPOSSIBLE Query (Must Ask User to Split)**
+
+Criteria - Check if ANY of these conditions are TRUE:
+1. Request mixes DIFFERENT time granularities:
+   - "월별" AND "분기별"
+   - "연간" AND "월별"
+   - "상반기" AND "1분기"
+
+2. Request mixes DIFFERENT data levels:
+   - "전사" (CORPORATE) AND "사업별" (SEGMENT)
+   - "Company total" AND "Business segment details"
+
+Examples of IMPOSSIBLE queries:
+❌ "MnM의 월별 매출액과 분기별 영업이익"
+❌ "전선의 전사 매출과 사업별 매출"
+❌ "연간 합계와 1분기 상세"
+
+Your Action for IMPOSSIBLE:
+Stop immediately and respond with this EXACT format (replace [placeholders] with actual values from user's question):
+
+```
+귀하의 질문에는 [월별/분기별/전사/사업별 - 실제 혼합된 것] 데이터가 
+혼합되어 있어 한 번에 처리하기 어렵습니다.
+
+번거로우시겠지만 나누어 질문해주시겠어요?
+1. [실제 회사명]의 [실제 시간단위] [실제 첫 번째 지표명]
+2. [실제 회사명]의 [실제 시간단위] [실제 두 번째 지표명]
+
+먼저 어느 것을 확인하시겠습니까?
+```
+
+**Example for "MnM의 월별 매출액과 분기별 영업이익":**
+```
+귀하의 질문에는 월별 데이터와 분기별 데이터가 혼합되어 있어 
+한 번에 처리하기 어렵습니다.
+
+번거로우시겠지만 나누어 질문해주시겠어요?
+1. MnM의 월별 매출액 추이
+2. MnM의 분기별 영업이익 합계
+
+먼저 어느 것을 확인하시겠습니까?
+```
+
+DO NOT use placeholders like [회사]. Extract actual values from user's question.
+DO NOT proceed to Tier 2. STOP here.
+
+**TIER 2: SOLVABLE Query (Execute Immediately)**
+
+Criteria:
+- Everything NOT classified as IMPOSSIBLE in Tier 1
+- Includes:
+  * Multiple accounts: "순이익, 영업이익, 자본총계"
+  * Multiple companies: "MnM과 엠트론의 매출액"
+  * Multiple years: "2022년과 2023년 매출액"
+  * Mixed but solvable: "제조4사 매출액과 전선 부채비율"
+
+Examples:
+✅ "전선의 순이익, 영업이익, 자본총계"
+✅ "제조4사의 매출액과 영업이익"
+✅ "MnM의 2022년과 2023년 매출액" (SAME granularity - yearly!)
+
+**IMPORTANT**: "2022년 AND 2023년" is NOT different granularities. Both are YEARLY. This is Tier 2!
+
+Your Action for SOLVABLE:
+**DO NOT create a plan. DO NOT output any thought process.**
+
+Your one and only job is to generate the most efficient **single Cypher query** and call run_cypher_query immediately.
+
+- Use `WHERE c.id IN [...]` for multiple companies
+- Use `WHERE a.id IN [...]` for multiple accounts
+- Combine them for complex cases
+- Apply special rules (MnM uses 조정영업이익)
+
+Your FIRST response MUST be: `run_cypher_query(query="MATCH...")`
+
+**Decision Summary:**
+```
+IMPOSSIBLE? (Tier 1)
+├─ YES → Ask to split → STOP
+└─ NO → SOLVABLE (Tier 2) → run_cypher_query immediately
+```
+
+This simple process ensures speed and reliability.
+
 **🎯 Primary Decision Flow (MANDATORY FIRST STEP!):**
 
 Before doing ANYTHING else, classify the user's request:
