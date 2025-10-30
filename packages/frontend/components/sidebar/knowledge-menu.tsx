@@ -1,8 +1,8 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronDown, ChevronRight, Building2, FileText, BarChart3 } from "lucide-react"
-import type { KnowledgeMenuData, SubCategory, MenuItem } from "@/lib/types"
+import { ChevronDown, ChevronRight, Building2, FileText, BarChart3, Network } from "lucide-react"
+import type { KnowledgeMenuData, SubCategory, MenuItem, SegmentCompany, SegmentCIC } from "@/lib/types"
 
 interface KnowledgeMenuProps {
   menuData: KnowledgeMenuData | null
@@ -11,6 +11,8 @@ interface KnowledgeMenuProps {
 export function KnowledgeMenu({ menuData }: KnowledgeMenuProps) {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
   const [expandedSubCategories, setExpandedSubCategories] = useState<Set<string>>(new Set())
+  const [expandedCompanies, setExpandedCompanies] = useState<Set<string>>(new Set())
+  const [expandedCICs, setExpandedCICs] = useState<Set<string>>(new Set())
 
   if (!menuData) {
     return <div className="p-4 text-sm text-muted-foreground">지식 베이스를 불러오는 중...</div>
@@ -40,8 +42,36 @@ export function KnowledgeMenu({ menuData }: KnowledgeMenuProps) {
     })
   }
 
-  const isSubCategory = (item: MenuItem | SubCategory): item is SubCategory => {
+  const toggleCompany = (companyId: string) => {
+    setExpandedCompanies((prev) => {
+      const next = new Set(prev)
+      if (next.has(companyId)) {
+        next.delete(companyId)
+      } else {
+        next.add(companyId)
+      }
+      return next
+    })
+  }
+
+  const toggleCIC = (cicId: string) => {
+    setExpandedCICs((prev) => {
+      const next = new Set(prev)
+      if (next.has(cicId)) {
+        next.delete(cicId)
+      } else {
+        next.add(cicId)
+      }
+      return next
+    })
+  }
+
+  const isSubCategory = (item: MenuItem | SubCategory | SegmentCompany): item is SubCategory => {
     return "sub_items" in item
+  }
+
+  const isSegmentCompany = (item: MenuItem | SubCategory | SegmentCompany): item is SegmentCompany => {
+    return "type" in item && item.type === "company" && "segments" in item
   }
 
   const getCategoryIcon = (type: string) => {
@@ -78,7 +108,79 @@ export function KnowledgeMenu({ menuData }: KnowledgeMenuProps) {
             {expandedCategories.has(category.category) && (
               <div className="ml-6 mt-1 space-y-1">
                 {category.items.map((item, idx) => {
-                  if (isSubCategory(item)) {
+                  // 사업 카테고리의 특별 처리
+                  if (isSegmentCompany(item)) {
+                    const companyKey = `segment-${item.id}`
+                    return (
+                      <div key={companyKey}>
+                        <button
+                          onClick={() => toggleCompany(companyKey)}
+                          className="flex items-center w-full px-3 py-1.5 text-sm text-foreground hover:bg-accent rounded-md transition-colors"
+                        >
+                          {expandedCompanies.has(companyKey) ? (
+                            <ChevronDown className="h-3 w-3 mr-2 shrink-0 text-muted-foreground" />
+                          ) : (
+                            <ChevronRight className="h-3 w-3 mr-2 shrink-0 text-muted-foreground" />
+                          )}
+                          <Building2 className="h-3 w-3 mr-2 shrink-0 text-muted-foreground" />
+                          <span className="text-muted-foreground font-medium">{item.name}</span>
+                        </button>
+
+                        {expandedCompanies.has(companyKey) && (
+                          <div className="ml-5 mt-1 space-y-1">
+                            {/* CIC 레벨 (ELECTRIC만) */}
+                            {item.cics && item.cics.length > 0 && item.cics.map((cic) => {
+                              const cicKey = `${companyKey}-${cic.id}`
+                              return (
+                                <div key={cicKey}>
+                                  <button
+                                    onClick={() => toggleCIC(cicKey)}
+                                    className="flex items-center w-full px-3 py-1.5 text-xs text-foreground hover:bg-accent rounded-md transition-colors"
+                                  >
+                                    {expandedCICs.has(cicKey) ? (
+                                      <ChevronDown className="h-3 w-3 mr-2 shrink-0 text-muted-foreground" />
+                                    ) : (
+                                      <ChevronRight className="h-3 w-3 mr-2 shrink-0 text-muted-foreground" />
+                                    )}
+                                    <Network className="h-3 w-3 mr-2 shrink-0 text-muted-foreground" />
+                                    <span className="text-muted-foreground">{cic.name}</span>
+                                    <span className="ml-auto text-[10px] text-muted-foreground/60">
+                                      {cic.segments.length}개
+                                    </span>
+                                  </button>
+
+                                  {expandedCICs.has(cicKey) && (
+                                    <div className="ml-5 mt-1 space-y-0.5">
+                                      {cic.segments.map((segment) => (
+                                        <button
+                                          key={`${cicKey}-${segment}`}
+                                          className="block w-full px-3 py-1 text-[11px] text-left text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-md transition-colors"
+                                        >
+                                          {segment}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+
+                            {/* 직접 사업 목록 (CIC 없는 회사) */}
+                            {item.segments && item.segments.length > 0 && item.segments.map((segment) => (
+                              <button
+                                key={`${companyKey}-${segment}`}
+                                className="block w-full px-3 py-1 text-xs text-left text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-md transition-colors"
+                              >
+                                {segment}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }
+                  // 재무계정 카테고리의 SubCategory 처리
+                  else if (isSubCategory(item)) {
                     const subKey = `${category.category}-${item.name}`
                     return (
                       <div key={subKey}>
@@ -108,7 +210,9 @@ export function KnowledgeMenu({ menuData }: KnowledgeMenuProps) {
                         )}
                       </div>
                     )
-                  } else {
+                  }
+                  // 일반 MenuItem (회사 카테고리)
+                  else {
                     return (
                       <button
                         key={item.id}

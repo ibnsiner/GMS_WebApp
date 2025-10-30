@@ -10,10 +10,25 @@ export interface SubCategory {
   sub_items: MenuItem[]
 }
 
+// 사업 카테고리용 확장 타입
+export interface SegmentCIC {
+  id: string
+  name: string
+  segments: string[]
+}
+
+export interface SegmentCompany {
+  id: string
+  name: string
+  type: "company"
+  cics: SegmentCIC[]
+  segments: string[]
+}
+
 export interface Category {
   category: string
   type: "company" | "account" | "segment"
-  items: (MenuItem | SubCategory)[]
+  items: (MenuItem | SubCategory | SegmentCompany)[]
 }
 
 export interface KnowledgeMenuData {

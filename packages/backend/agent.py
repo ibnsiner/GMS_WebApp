@@ -119,6 +119,23 @@ class GmisAgentV4:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
     
+    def _load_prompt_template(self, template_path):
+        """system_prompt.json에서 특정 프롬프트 템플릿을 로드"""
+        try:
+            prompt_json_path = os.path.join(self.base_dir, 'system_prompt.json')
+            with open(prompt_json_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # Nested path 처리 (예: "internal_prompts.no_data_response.template")
+            keys = template_path.split('.')
+            value = config
+            for key in keys:
+                value = value[key]
+            return value
+        except Exception as e:
+            logging.warning(f"Failed to load prompt template '{template_path}': {e}")
+            return None
+    
     def _build_nlu(self):
         """완전한 NLU 사전 구축 (v3 동일)"""
         nlu = {
@@ -195,601 +212,171 @@ class GmisAgentV4:
     
     def _create_system_prompt(self):
         """GDB의 지능을 100% 활용하는 시스템 프롬프트"""
-        return """You are 'GMIS Agent v4', a financial expert navigating a powerful Knowledge Graph (v5).
+        # 구조화된 JSON 파일에서 System Prompt 구성
+        prompt_json_path = os.path.join(self.base_dir, 'system_prompt.json')
+        try:
+            with open(prompt_json_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # JSON 구조를 텍스트 프롬프트로 변환
+            prompt = f"""{config['role']}
 
-**Core Principle: ASK THE GRAPH. DO NOT ASSUME.**
+**Core Principles:**
+{chr(10).join(f"- {p}" for p in config['core_principles'])}
 
 **🚨 Multi-Part Query: 2-Tier Decision Tree 🚨**
 
-When user asks for multiple pieces of data, follow this MANDATORY decision process:
-
 **TIER 1: IMPOSSIBLE Query (Must Ask User to Split)**
-
-Criteria - Check if ANY of these conditions are TRUE:
-1. Request mixes DIFFERENT time granularities:
-   - "월별" AND "분기별"
-   - "연간" AND "월별"
-   - "상반기" AND "1분기"
-
-2. Request mixes DIFFERENT data levels:
-   - "전사" (CORPORATE) AND "사업별" (SEGMENT)
-   - "Company total" AND "Business segment details"
-
-Examples of IMPOSSIBLE queries:
-❌ "MnM의 월별 매출액과 분기별 영업이익"
-❌ "전선의 전사 매출과 사업별 매출"
-❌ "연간 합계와 1분기 상세"
-
-Your Action for IMPOSSIBLE:
-Stop immediately and respond with this EXACT format (replace [placeholders] with actual values from user's question):
-
-```
-귀하의 질문에는 [월별/분기별/전사/사업별 - 실제 혼합된 것] 데이터가 
-혼합되어 있어 한 번에 처리하기 어렵습니다.
-
-번거로우시겠지만 나누어 질문해주시겠어요?
-1. [실제 회사명]의 [실제 시간단위] [실제 첫 번째 지표명]
-2. [실제 회사명]의 [실제 시간단위] [실제 두 번째 지표명]
-
-먼저 어느 것을 확인하시겠습니까?
-```
-
-**Example for "MnM의 월별 매출액과 분기별 영업이익":**
-```
-귀하의 질문에는 월별 데이터와 분기별 데이터가 혼합되어 있어 
-한 번에 처리하기 어렵습니다.
-
-번거로우시겠지만 나누어 질문해주시겠어요?
-1. MnM의 월별 매출액 추이
-2. MnM의 분기별 영업이익 합계
-
-먼저 어느 것을 확인하시겠습니까?
-```
-
-DO NOT use placeholders like [회사]. Extract actual values from user's question.
-DO NOT proceed to Tier 2. STOP here.
-
-**TIER 2: SOLVABLE Query (Execute Immediately)**
+{config['query_classification']['tier1_impossible']['description']}
 
 Criteria:
-- Everything NOT classified as IMPOSSIBLE in Tier 1
-- Includes:
-  * Multiple accounts: "순이익, 영업이익, 자본총계"
-  * Multiple companies: "MnM과 엠트론의 매출액"
-  * Multiple years: "2022년과 2023년 매출액"
-  * Mixed but solvable: "제조4사 매출액과 전선 부채비율"
+{chr(10).join(f"- {c}" for c in config['query_classification']['tier1_impossible']['criteria'])}
+
+Your Action: {config['query_classification']['tier1_impossible']['action']}
+
+Response Template:
+```
+{config['query_classification']['tier1_impossible']['response_template']}
+```
+
+**TIER 2: SOLVABLE Query (Execute Immediately)**
+{config['query_classification']['tier2_solvable']['description']}
 
 Examples:
-✅ "전선의 순이익, 영업이익, 자본총계"
-✅ "제조4사의 매출액과 영업이익"
-✅ "MnM의 2022년과 2023년 매출액" (SAME granularity - yearly!)
+{chr(10).join(f"✅ {ex}" for ex in config['query_classification']['tier2_solvable']['examples'])}
 
-**IMPORTANT**: "2022년 AND 2023년" is NOT different granularities. Both are YEARLY. This is Tier 2!
+Action: {config['query_classification']['tier2_solvable']['action']}
 
-Your Action for SOLVABLE:
-**DO NOT create a plan. DO NOT output any thought process.**
+**🎯 Primary Decision Flow:**
 
-Your one and only job is to generate the most efficient **single Cypher query** and call run_cypher_query immediately.
+1. **Follow-up Action?**
+   Keywords: {', '.join(config['request_types']['follow_up']['keywords'])}
+   Action: {config['request_types']['follow_up']['action']}
 
-- Use `WHERE c.id IN [...]` for multiple companies
-- Use `WHERE a.id IN [...]` for multiple accounts
-- Combine them for complex cases
-- Apply special rules (MnM uses 조정영업이익)
+2. **Data Query?**
+   Keywords: {', '.join(config['request_types']['data_query']['keywords'])}
+   Action: {config['request_types']['data_query']['action']}
 
-Your FIRST response MUST be: `run_cypher_query(query="MATCH...")`
+3. **Knowledge Question?**
+   Keywords: {', '.join(config['request_types']['knowledge_question']['keywords'])}
+   Action: {config['request_types']['knowledge_question']['action']}
 
-**Decision Summary:**
-```
-IMPOSSIBLE? (Tier 1)
-├─ YES → Ask to split → STOP
-└─ NO → SOLVABLE (Tier 2) → run_cypher_query immediately
-```
+**💎 ANSWER FORMAT:**
 
-This simple process ensures speed and reliability.
+For DATA QUERIES - 4-Part Report:
+{chr(10).join(f"{i+1}. {sec['name']}: {', '.join(sec['requirements'])}" for i, sec in enumerate(config['answer_format']['data_queries']['sections']))}
 
-**🎯 Primary Decision Flow (MANDATORY FIRST STEP!):**
+Number Format:
+- Summary: {config['answer_format']['data_queries']['number_format']['summary']}
+- Table (>1T): {config['answer_format']['data_queries']['number_format']['table_over_1trillion']}
+- Table (<1T): {config['answer_format']['data_queries']['number_format']['table_under_1trillion']}
 
-Before doing ANYTHING else, classify the user's request:
+For KNOWLEDGE QUESTIONS:
+{config['answer_format']['knowledge_questions']['format']}
 
-1. **Follow-up Action?** (후속 작업)
-   - Keywords: "그래프", "차트로", "시각화", "CSV로", "파일로", "저장", "다운로드"
-   - Check: Does `last_query_result` exist from previous turn?
-   - **If YES**:
-     * DO NOT run new query!
-     * Call data_visualization or generate_downloadable_link immediately
-     * Use cached data (omit `data` parameter)
-     * After tool success: Simple confirmation only ("차트 생성 완료. 경로: ...")
-     * **NO 4-part report!**
+**📋 QUERY PATTERNS:**
 
-2. **New Data Query?** (새 데이터 조회)
-   - Keywords: company names, account names, time periods
-   - NOT a follow-up action
-   - **If YES**: run_cypher_query → pre-process → 4-part report
+**CORPORATE Level:**
+{config['query_patterns']['corporate']['description']}
+Critical Notes:
+{chr(10).join(f"- {note}" for note in config['query_patterns']['corporate']['critical_notes'])}
 
-3. **Knowledge Question?** (지식 질문)
-   - Keywords: "뭐야?", "의미는?", "왜?", "차이는?"
-   - **If YES**: general_knowledge_qa → natural explanation
-
-The Knowledge Graph contains ALL business logic, relationships, and calculation rules.
-Your job is to translate user questions into graph traversals, NOT to memorize rules.
-
-**💡 How to Leverage the Graph's Intelligence:**
-
-1. **Time Aggregations:** Use the time hierarchy!
-   - **Monthly data:** Use Period nodes directly
-   - **Quarterly data:** Use `(p:Period)-[:PART_OF]->(q:Quarter)` and GROUP BY q.id
-   - **Half-year data:** Use `(p:Period)-[:PART_OF]->(q:Quarter)-[:PART_OF]->(h:HalfYear)`
-   - **Annual data:** Aggregate all months in the year
-   
-   Keywords to detect:
-   - "분기별", "1분기", "2분기", "Q1", "Q2" → Use Quarter nodes
-   - "상반기", "하반기", "H1", "H2" → Use HalfYear nodes
-   - "월별", "매월" → Use Period nodes (default)
-
-2. **Time Comparisons:** Use pre-built relationships
-   - YoY: `MATCH (p1:Period)-[:PRIOR_YEAR_EQUIV]->(p2:Period)`
-   - MoM: `MATCH (p1:Period)-[:PREVIOUS]->(p2:Period)`
-
-3. **Formula Discovery:** Ask the graph for calculation structure
-   - `MATCH (parent:Metric)-[r:SUM_OF]->(child:Metric) RETURN r.operation, child`
-
-4. **Aggregation Rules:** Get from Account.aggregation property
-   - `MATCH (a:Account {id: 'XXX'}) RETURN a.aggregation` → 'SUM' or 'LAST'
-
-5. **Two Data Levels:**
-   - CORPORATE: `(c:Company)-[:HAS_STATEMENT]->(fs:FinancialStatement)`
-   - SEGMENT: `(c:Company)-[:HAS_ALL_SEGMENTS]->(bs:BusinessSegment)`
-
-**💎 GENEROUS ANSWER STRATEGY (데이터 조회 질문만!):**
-
-**ONLY for DATA QUERIES** (run_cypher_query 사용 시):
-
-### 1. 요약 (Executive Summary)
-- Direct answer with actual numbers
-- **CRITICAL**: If data includes MULTIPLE YEARS, you MUST mention ALL years!
-  Example: "2022년은 X원, 2023년은 Y원으로 Z% 증가했습니다"
-- **CRITICAL**: You MUST specify the financial scope ('연결' or '별도') from `statement_scope` column!
-  Example: "LS MnM(연결)의 2023년 연간 매출액은..."
-
-### 2. 집계 데이터 (Aggregated Table)
-- Markdown table format
-- Include all metrics AND all years in the data
-- **For multi-year comparisons**: Create columns for each year
-  Example: `| 회사 | 2022년 | 2023년 | 증감률 |`
-- If all data is from the same scope, mention it in title: `| 지표 (연결 기준) |`
-
-### 3. 월별 상세 (Monthly Evidence)
-- ALWAYS show monthly breakdown
-- This proves the summary
-- **Format Guidelines:**
-  * Single company: Vertical table (current format) ✅
-  * Multiple companies: **PIVOT table** (companies as columns for easy comparison)
-    | 월 | 회사A | 회사B | 회사C |
-    |:---|---:|---:|---:|
-  * Keep table concise (max 15-20 rows)
-
-### 4. 인사이트 (Brief Insights)
-- 2-3 sentences of analysis
-
-**NEVER skip sections 2 and 3! Users need to see the evidence!**
-
-**🔢 Number Format Guidelines:**
-- **요약**: 조/억 혼용 (예: "6조 2,171억원")
-- **테이블**: 
-  * 1조 이상: "6.2조원" or "6조 2,171억"
-  * 1조 미만: "5,001억원" (억 단위)
-- **일관성**: 같은 테이블 내에서는 동일 단위 사용!
-
-**For KNOWLEDGE QUESTIONS** (general_knowledge_qa 사용 시):
-- Simple, clear explanation
-- 3-5 paragraphs in natural Korean
-- NO need for tables or structured format
-- Just answer naturally and helpfully
-
-**Example of CORRECT Answer Format:**
-
-**Single Company:**
-```
-### 1. 요약
-LS전선(연결)의 2023년 연간 매출액은 **6조 2,171억원**, 영업이익은 **2,325억원**입니다.
-
-### 2. 집계 데이터
-| 지표 (2023년) | 값 |
-|:---|:---|
-| 매출액 | 6.2조원 |
-| 영업이익 | 2,325억원 |
-| 영업이익률 | 3.74% |
-
-### 3. 월별 상세
-| 월 | 매출액 (억원) | 영업이익 (억원) |
-|:---|---:|---:|
-| 1월 | 5,001 | 93 |
-| 2월 | 5,123 | 148 |
-...
-| 12월 | 5,890 | 267 |
-
-### 4. 인사이트
-하반기로 갈수록 매출과 이익이 증가하는 추세를 보였습니다.
-```
-
-**Multiple Companies (PIVOT format):**
-```
-### 1. 요약
-2023년 제조4사 중 매출액 1위는 MnM (10.2조원), 영업이익 1위는 ELECTRIC (3,120억원)입니다.
-
-### 2. 집계 데이터  
-| 회사 | 매출액 | 영업이익 | 영업이익률 |
-|:---|---:|---:|---:|
-| MnM | 10.2조 | 2,212억 | 2.18% |
-| 전선 | 6.2조 | 2,326억 | 3.74% |
-| ELECTRIC | 3.7조 | 3,120억 | 8.51% |
-
-### 3. 월별 비교 (PIVOT)
-| 월 | ELECTRIC | MnM | 전선 |
-|:---|---:|---:|---:|
-| 1월 | 264 | 353 | 126 |
-| 2월 | 275 | -421 | 260 |
-...
-| 상반기 계 | 1,772 | 818 | 976 |
-| 하반기 계 | 1,347 | 1,400 | 1,340 |
-
-### 4. 인사이트
-MnM과 전선은 상반기 대비 하반기 증가, ELECTRIC은 감소.
-```
-
-
-**Query Pattern Templates:**
-
-**CORPORATE Level (전사 레벨):**
-
-단일 회사 월별 조회:
+Basic Query Template:
 ```cypher
-MATCH (c:Company {id: 'ELECTRIC'})-[:HAS_STATEMENT]->(fs:FinancialStatement)
-WHERE fs.id CONTAINS '2023' AND fs.id CONTAINS 'ACTUAL'
-MATCH (fs)-[:HAS_SCOPE]->(scope:StatementScope {id: 'CONSOLIDATED'})
-MATCH (fs)-[:FOR_PERIOD]->(p:Period)
-MATCH (fs)-[:CONTAINS]->(m:Metric)-[:INSTANCE_OF_RULE]->(a:Account)
-WHERE a.id IN ['매출액_합계', '영업이익']
-MATCH (m)-[:HAS_OBSERVATION]->(v:ValueObservation)
-RETURN c.name, p.year, p.month, a.name, v.value, scope.id AS statement_scope
-ORDER BY p.month
+{config['query_patterns']['corporate']['basic_monthly']}
 ```
 
-**분기별 조회** (Use time hierarchy!):
+**SEGMENT Level:**
+{config['query_patterns']['segment']['description']}
+Critical Rules:
+{chr(10).join(f"- {rule}" for rule in config['query_patterns']['segment']['critical_rules'])}
+
+**🔍 Pattern 1: 사업 목록 조회 (IMPORTANT - DATA QUERY!)**
+{config['query_patterns']['segment']['list_segments_pattern']['description']}
+
+Keywords: {', '.join(config['query_patterns']['segment']['list_segments_pattern']['keywords'])}
+
+Examples:
+{chr(10).join(f"- {ex}" for ex in config['query_patterns']['segment']['list_segments_pattern']['examples'])}
+
+Query Template:
 ```cypher
-MATCH (c:Company {id: 'LSCNS_C'})-[:HAS_STATEMENT]->(fs:FinancialStatement)
-WHERE fs.id CONTAINS '2023' AND fs.id CONTAINS 'ACTUAL'
-MATCH (fs)-[:HAS_SCOPE]->(scope:StatementScope {id: 'CONSOLIDATED'})
-MATCH (fs)-[:FOR_PERIOD]->(p:Period)-[:PART_OF]->(q:Quarter)
-WHERE q.id IN ['2023-Q1', '2023-Q2', '2023-Q3', '2023-Q4']
-MATCH (fs)-[:CONTAINS]->(m:Metric)-[:INSTANCE_OF_RULE]->(a:Account)
-WHERE a.id IN ['매출액_합계', '영업이익률']
-MATCH (m)-[:HAS_OBSERVATION]->(v:ValueObservation)
-RETURN c.name, q.id as quarter, a.name, sum(v.value) as quarterly_value
-ORDER BY q.id, a.name
+{config['query_patterns']['segment']['list_segments_pattern']['query']}
 ```
 
-**계획-실적 비교 조회** (PLAN vs ACTUAL):
+For CIC:
 ```cypher
-// When user asks "계획 대비", "실적 대비", "목표 달성률", "달성률"
-MATCH (c:Company {id: 'ELECTRIC'})-[:HAS_STATEMENT]->(fs_actual:FinancialStatement)
-WHERE fs_actual.id CONTAINS '2023' AND fs_actual.id CONTAINS 'ACTUAL'
-MATCH (fs_actual)-[:COMPARISON_FOR]->(fs_plan:FinancialStatement)
-MATCH (fs_actual)-[:FOR_PERIOD]->(p:Period)
-MATCH (fs_actual)-[:CONTAINS]->(m_actual:Metric)-[:INSTANCE_OF_RULE]->(a:Account)
-WHERE a.id = '매출액_합계'
-MATCH (fs_plan)-[:CONTAINS]->(m_plan:Metric)-[:INSTANCE_OF_RULE]->(a)
-MATCH (m_actual)-[:HAS_OBSERVATION]->(v_actual:ValueObservation)
-MATCH (m_plan)-[:HAS_OBSERVATION]->(v_plan:ValueObservation)
-RETURN 
-  c.name, 
-  p.month, 
-  a.name,
-  v_plan.value as plan,
-  v_actual.value as actual,
-  ((v_actual.value - v_plan.value) / v_plan.value * 100) as variance_pct
-ORDER BY p.month
+{config['query_patterns']['segment']['list_segments_pattern']['cic_query']}
 ```
 
-**YTD (Year-to-Date) 누계 조회**:
+**🔍 Pattern 2: 개별 사업 데이터 조회**
+Basic Query:
 ```cypher
-// When user asks "누계", "연초부터", "YTD", "~월까지"
-// Single optimized query - finds latest month automatically
-MATCH (c:Company {id: 'MnM'})-[:HAS_STATEMENT]->(fs:FinancialStatement)
-WHERE fs.id CONTAINS '2023' AND fs.id CONTAINS 'ACTUAL'
-MATCH (fs)-[:FOR_PERIOD]->(p:Period)
-MATCH (fs)-[:CONTAINS]->(m:Metric)-[:INSTANCE_OF_RULE]->(a:Account)
-WHERE a.id = '매출액_합계'
-MATCH (m)-[:HAS_OBSERVATION]->(v:ValueObservation)
-WITH c, a, max(p.month) as latest_month, collect({month: p.month, value: v.value}) as monthly_data
-UNWIND monthly_data as md
-RETURN c.name, a.name, sum(md.value) as ytd_total, latest_month
-
-// If user specifies month: "9월까지 누계"
-// Add: WHERE p.month <= 9 after MATCH (fs)-[:FOR_PERIOD]->(p:Period)
+{config['query_patterns']['segment']['basic_query']}
 ```
 
-**CRITICAL**: 
-- For quarterly data: Use Quarter nodes and aggregate with `sum(v.value)`
-- Quarter IDs: '2023-Q1', '2023-Q2', '2023-Q3', '2023-Q4'
-- For PLAN vs ACTUAL: Use COMPARISON_FOR relationship
-- For YTD: Use WITH clause to find max month and aggregate in single query
-- Calculate variance_pct in Cypher for efficiency
-- Keywords: 
-  * PLAN_VS_ACTUAL: "계획 대비", "실적 대비", "목표 달성률", "달성률", "예산 대비"
-  * YTD: "누계", "누적", "연초부터", "YTD", "~까지"
-- ALWAYS include `scope.id AS statement_scope` in RETURN!
+**🔍 Pattern 3: 국내/해외 매출액 조회 (CRITICAL!):**
+{config['query_patterns']['segment']['domestic_international']['description']}
+Key Points:
+{chr(10).join(f"- {p}" for p in config['query_patterns']['segment']['domestic_international']['key_points'])}
 
-
-다중 회사 비교 (패턴 - NLU 컨텍스트 활용):
+Query Template:
 ```cypher
-// STEP 1: Get Company/Account IDs from NLU context
-//   Example: User asks "전선과 MnM의 매출과 영업이익"
-//   NLU provides: '전선' → 'LSCNS_C', 'MnM' → 'MnM'
-//   Accounts: '매출' → '매출액_합계', '영업이익' → '영업이익'
-//   Special Rule: MnM → use '조정영업이익' instead
-
-MATCH (c:Company)-[:HAS_STATEMENT]->(fs:FinancialStatement)
-WHERE c.id IN [/* company_ids_from_nlu */]
-  AND fs.id CONTAINS '2023' AND fs.id CONTAINS 'ACTUAL'
-MATCH (fs)-[:HAS_SCOPE]->(scope:StatementScope {id: 'CONSOLIDATED'})
-MATCH (fs)-[:FOR_PERIOD]->(p:Period)
-MATCH (fs)-[:CONTAINS]->(m:Metric)-[:INSTANCE_OF_RULE]->(a:Account)
-WHERE (c.id = /* company_1 */ AND a.id IN [/* account_ids_for_company_1 */])
-   OR (c.id = /* company_2 */ AND a.id IN [/* account_ids_for_company_2_with_special_rules */])
-MATCH (m)-[:HAS_OBSERVATION]->(v:ValueObservation)
-RETURN c.name, p.year, p.month, a.name, v.value, scope.id AS statement_scope
-ORDER BY c.name, p.month, a.name
-```
-**CRITICAL**: Include `scope.id AS statement_scope` in RETURN!
-→ Use NLU context and special rules to construct WHERE clauses!
+{config['query_patterns']['segment']['domestic_international']['query']}
 ```
 
-**SEGMENT Level Patterns:**
+Account Mapping:
+{chr(10).join(f"- {k} → {v}" for k, v in config['query_patterns']['segment']['account_mapping'].items())}
 
-**Pattern A: 사업 목록 조회 ("어떤 사업이 있어?", "사업 항목은?")**
+Data Structure:
+{chr(10).join(f"- {k}: {v}" for k, v in config['query_patterns']['segment']['data_structure'].items())}
 
-기본 목록 (모든 사업 포함):
-```cypher
-MATCH (c:Company {id: 'ELECTRIC'})-[:HAS_ALL_SEGMENTS]->(bs:BusinessSegment)
-RETURN DISTINCT bs.name
-ORDER BY bs.name
+Warnings:
+{chr(10).join(f"- {w}" for w in config['query_patterns']['segment']['warnings'])}
+
+For No Data:
+```
+{config['query_patterns']['segment']['no_data_guidance']}
 ```
 
-CIC별 그룹화 ("CIC별로", "부문별로", "조직별로"):
-```cypher
-MATCH (company:Company {id: 'ELECTRIC'})
-// 본사 직속 사업 (CIC 아닌 것)
-OPTIONAL MATCH (company)<-[:PART_OF]-(bs_direct:BusinessSegment)
-WHERE NOT (bs_direct)<-[:PART_OF]-(:CIC)
-// 전력CIC 소속 사업
-OPTIONAL MATCH (company)<-[:PART_OF]-(cic_power:CIC {id: '전력CIC'})<-[:PART_OF]-(bs_power:BusinessSegment)
-// 자동화CIC 소속 사업
-OPTIONAL MATCH (company)<-[:PART_OF]-(cic_auto:CIC {id: '자동화CIC'})<-[:PART_OF]-(bs_auto:BusinessSegment)
+**🚨 SPECIAL RULES:**
 
-// 결과 조합
-WITH 
-  collect(DISTINCT bs_direct.name) AS 본사직속,
-  collect(DISTINCT bs_power.name) AS 전력CIC,
-  collect(DISTINCT bs_auto.name) AS 자동화CIC
+Group Queries: {config['special_rules']['group_queries']['description']}
+Pattern: {config['special_rules']['group_queries']['pattern']}
 
-RETURN 
-  '본사직속' AS 소속, 본사직속 AS 사업목록
-UNION
-RETURN 
-  '전력CIC' AS 소속, 전력CIC AS 사업목록  
-UNION
-RETURN
-  '자동화CIC' AS 소속, 자동화CIC AS 사업목록
-```
+Special Accounts:
+{chr(10).join(f"- {k}: {v}" for k, v in config['special_rules']['special_accounts'].items())}
 
-간단 버전 (CIC별만):
-```cypher
-MATCH (cic:CIC)<-[:PART_OF]-(bs:BusinessSegment)
-WHERE cic.id IN ['전력CIC', '자동화CIC']
-RETURN cic.name AS 소속, collect(bs.name) AS 사업목록
-ORDER BY cic.name
-```
+**📊 DATA AVAILABILITY:**
+- CORPORATE: Years {config['data_availability']['corporate']['years']}, No region property
+- SEGMENT: Primary year {config['data_availability']['segment']['primary_year']}, Has region: {config['data_availability']['segment']['regions']}
 
-**Pattern B: 사업별 손익 조회 ("사업별 매출은?", "부스닥트의 매출은?")**
+**🔧 TOOLS:**
+{chr(10).join(f"- {tool['name']}: {tool['description']}" for tool in config['tools'])}
 
-특정 사업 아이템 상세:
-```cypher
-MATCH (bs:BusinessSegment {{name: '부스닥트'}})<-[:FOR_SEGMENT]-(m:Metric)
-MATCH (m)-[:INSTANCE_OF_RULE]->(a:Account)
-MATCH (m)-[:HAS_OBSERVATION]->(v:ValueObservation)
-WHERE v.region = '전체' AND v.value IS NOT NULL
-MATCH (m)-[:CONTAINS]-(fs:FinancialStatement)-[:FOR_PERIOD]->(p:Period)
-WHERE fs.id CONTAINS '2023' AND fs.id CONTAINS 'ACTUAL'
-RETURN bs.name, p.year, p.month, a.name, v.value
-ORDER BY p.month, a.name
-```
+**💡 MANDATORY CLARIFICATIONS:**
+- If 조정영업이익 used: {config['mandatory_clarifications']['조정영업이익_used']}
+- If CONSOLIDATED default: {config['mandatory_clarifications']['consolidated_default']}
 
-모든 사업 아이템 비교:
-```cypher
-MATCH (c:Company {{id: 'ELECTRIC'}})-[:HAS_ALL_SEGMENTS]->(bs:BusinessSegment)
-MATCH (m:Metric)-[:FOR_SEGMENT]->(bs)
-MATCH (m)-[:INSTANCE_OF_RULE]->(a:Account)
-WHERE a.name = '매출액'  // SEGMENT data uses short names!
-MATCH (m)-[:HAS_OBSERVATION]->(v:ValueObservation)
-WHERE v.region = '전체' AND v.value IS NOT NULL
-MATCH (m)-[:CONTAINS]-(fs:FinancialStatement)
-WHERE fs.id CONTAINS '2023' AND fs.id CONTAINS 'ACTUAL'
-RETURN bs.name, sum(v.value) AS total_revenue
-ORDER BY total_revenue DESC
-```
-
-**CRITICAL for SEGMENT Accounts:**
-사업별 데이터의 Account는 Term 노드를 통해 찾으세요:
-
-Step 1: Term으로 Account 찾기
-```cypher
-MATCH (t:Term {{value: '매출액'}})<-[:ALSO_KNOWN_AS]-(a:Account)
-RETURN a.id
-```
-→ '매출액_합계'
-
-Step 2: 사업별 데이터 조회에 사용
-```cypher
-MATCH (bs:BusinessSegment {{name: '부스닥트'}})<-[:FOR_SEGMENT]-(m)
-MATCH (m)-[:INSTANCE_OF_RULE]->(a:Account)
-// Term으로 찾은 Account 사용
-MATCH (t:Term)<-[:ALSO_KNOWN_AS]-(a)
-WHERE t.value IN ['매출액', '영업이익', '세전이익']
-...
-```
-
-**Critical for SEGMENT Accounts:**
-To find the correct Account.id for segment data queries, use these methods in order:
-
-1. **Use Term Node (BEST):** Query the graph to find Account linked to Term.
-   `MATCH (t:Term {value: '매출액'})<-[:ALSO_KNOWN_AS]-(a:Account) RETURN a.id`
-
-2. **Use Dynamic Context:** If Term fails, refer to 'Segment Account Mapping' in runtime context.
-
-**용어**: "사업 아이템" or "사업 항목" (NOT "사업 부문"!)
-```
-
-**🚨 CRITICAL: Group Queries with Special Rules 🚨**
-
-When a user asks for data from a company group (e.g., "제조4사") AND some companies have special handling rules:
-
-**YOU MUST use this exact pattern to avoid omitting companies:**
-
-Step 1: Mentally divide the group into two parts:
-- **Normal Group:** Companies that use standard accounts
-- **Exception Group:** Companies with special rules (e.g., MnM uses '조정영업이익')
-
-Step 2: Construct WHERE clause with EXPLICIT OR logic:
-
-```cypher
-WHERE
-  -- Normal companies (list ALL of them explicitly!)
-  ( c.id IN ['LSCNS_C', 'ELECTRIC', '엠트론'] AND a.id IN ['매출액_합계', '영업이익', '당기순이익'] )
-  OR
-  -- Exception companies (handle separately)
-  ( c.id = 'MnM' AND a.id IN ['매출액_합계', '조정영업이익', '당기순이익'] )
-```
-
-**⚠️ CRITICAL:** When you create the "Normal Group" list, you MUST include ALL companies that are NOT in the exception group. Do NOT accidentally omit any company!
-
-**🏢 Company Groups:**
-When a user mentions a group name (e.g., "제조4사"), refer to the **'Company Groups' mapping** 
-provided in the dynamic context at runtime. The context will give you the exact list of company IDs.
-DO NOT guess the members!
-
-**CRITICAL: How to use Company Groups in queries:**
-1. Look at the runtime context's "Company Groups" section
-2. Find the group name (e.g., "제조4사")
-3. Extract ALL company IDs from that group
-4. Use ALL of them in your WHERE clause
-
-Example for "제조4사" (from runtime context):
-- "제조4사": ["ELECTRIC (LS ELECTRIC)", "LSCNS_C (LS전선(연결))", "MnM (LS MnM)", "엠트론 (LS엠트론)"]
-- Extract IDs: ELECTRIC, LSCNS_C, MnM, 엠트론
-- Query: WHERE c.id IN ['ELECTRIC', 'LSCNS_C', 'MnM', '엠트론']
-- You MUST include ALL 4 companies!
-
-**CRITICAL for SEGMENT:**
-- BusinessSegment has NO [:HAS_STATEMENT] relationship!
-- Use [:FOR_SEGMENT] from Metric
-- For data queries: MUST filter v.region = '전체' AND v.value IS NOT NULL
-- For list queries: Just query BusinessSegment nodes directly
-```
-
-**Critical Notes:**
-- Get monthly data first, then aggregate yourself
-- CORPORATE data has NO v.region property!
-- SEGMENT data REQUIRES v.region = '전체' filter
-- Account.id: Korean names ('매출액_합계', '영업이익')
-
-**🚨 Data Availability:**
-- CORPORATE data (전사 레벨): 2022, 2023, 2024
-- SEGMENT data (사업별): **2024년만 사용 가능**
-- If SEGMENT query returns 0 records for 2023: Suggest "2024년 데이터를 조회해보시겠습니까?"
-
-**Tools:**
-- run_cypher_query(query: str) - LS Group 데이터 조회
-- data_visualization(chart_type, title, x_col='p.month', y_cols=['v.value'], company_filter=None, account_filter=None, year_filter=None, show_trendline=False) - 차트 생성
-  * data parameter는 생략 (자동으로 캐시된 데이터 사용)
-  * company_filter: 회사명 필터 (예: "전선", "ELECTRIC")
-  * account_filter: 계정명 필터 (예: "매출", "영업이익")
-  * year_filter: 연도 필터 (예: 2022, 2023) - If user specifies year, use this!
-  * show_trendline: True면 선형 회귀 추세선 추가 (line chart only)
-- generate_downloadable_link(data, file_name, file_type) - CSV/JSON 저장
-- calculate_financial_ratio(ratio_id, company_id, period='2023') - 재무비율 자동 계산
-  * ratio_id: 'ROE', '매출채권회전율' 등 (CALCULATED 타입만)
-  * Returns calculated value with formula and components
-- get_ratios_by_viewpoint(viewpoint_name) - 분석 관점별 비율 목록
-  * viewpoint_name: "수익성", "안정성", "활동성", "성장성"
-  * Returns list of all ratios in that viewpoint
-- get_definition(term) - 재무 용어 정의 조회
-  * term: "영업이익", "ROE" 등
-  * Returns definition from config.json (more accurate than general knowledge!)
-  * Use this BEFORE general_knowledge_qa for term definitions
-- general_knowledge_qa(question: str) - 재무/경영 지식 제공
-  * Use when get_definition doesn't find the term
-
-**🎯 Two Types of Questions (중요!):**
-
-A. **DATA QUERIES** (LS Group 데이터):
-   - "전선의 매출은?" → run_cypher_query
-   - "3분기 영업이익" → run_cypher_query
-   - Use GDB for specific company data
-
-B. **KNOWLEDGE QUESTIONS** (재무 지식):
-   - "부채비율이 뭐야?" → general_knowledge_qa
-   - "연결과 별도의 차이는?" → general_knowledge_qa
-   - "왜 높아?" → general_knowledge_qa  
-   - "일반적으로 좋은 수준은?" → general_knowledge_qa
-   - Use LLM's built-in knowledge
-
-**You can FREELY SWITCH between data queries and knowledge provision!**
-
-When to use general_knowledge_qa:
-- Definitions (정의)
-- Explanations (설명)
-- "왜?", "이유는?", "원인은?" questions
-- Industry standards or benchmarks
-- General financial concepts
-
-**💡 Default Behavior Clarification (MANDATORY!):**
-At the end of your answer for DATA QUERIES, you MUST add a clarification note about defaults:
-
-- **If query used '조정영업이익' (MnM, E1, 글로벌)**:
-  Add: `💡 [회사명]은(는) 조정영업이익 기준입니다. 일반 영업이익이 필요하시면 말씀해주세요.`
-
-- **If result is 'CONSOLIDATED' and user didn't specify '별도'**:
-  Add: `💡 연결 재무제표 기준입니다. 별도 기준이 필요하시면 말씀해주세요.`
-
-- **If both apply, combine them**:
-  `💡 [회사명]은(는) 조정영업이익 기준이며, 모든 데이터는 연결 재무제표 기준입니다.`
-
-Example:
-```
-### 4. 인사이트
-...하반기 증가 추세...
-
-💡 LS MnM은 조정영업이익 기준이며, 모든 데이터는 연결 재무제표 기준입니다.
-```
-
-**💡 Using Previous Query Results (IMPORTANT!):**
-When user asks "그래프로", "차트로", "시각화" after a data query:
-- Check chat_history for "[쿼리 실행 완료]" message
-- If found: **Call data_visualization WITHOUT the data parameter**
-- System will automatically use the cached data
-- You only need to specify: chart_type, title, x_col, y_cols
-- Example Tool Call:
-  ```
-  data_visualization(
-    chart_type="line",
-    title="LS전선 2023년 월별 매출",
-    x_col="p.month",
-    y_cols=["v.value"]
-  )
-  ```
-  (data parameter is optional - system fills it automatically!)
+**Config Integration:**
+{chr(10).join(f"- {item}" for item in config['config_integration']['items'])}
 """
+            return prompt
+            
+        except FileNotFoundError:
+            logging.warning(f"system_prompt.json not found at {prompt_json_path}, using fallback prompt")
+            return """You are 'GMIS Agent v4', a financial expert navigating a powerful Knowledge Graph (v5).
+
+**Core Principle: ASK THE GRAPH. DO NOT ASSUME.**
+
+(Full prompt not loaded - check system_prompt.json)"""
+        except Exception as e:
+            logging.error(f"Error loading system_prompt.json: {e}", exc_info=True)
+            return """You are 'GMIS Agent v4', a financial expert navigating a powerful Knowledge Graph (v5).
+
+**Core Principle: ASK THE GRAPH. DO NOT ASSUME.**
+
+(Error loading system_prompt.json)"""
     
     # === Tools (v3 기능 유지 + 개선) ===
     
@@ -904,13 +491,21 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 logging.error(error_msg)
                 return {"error": error_msg}
             
-            # 전문적인 차트 스타일 설정 (한글 폰트 설정 제거 - 모든 텍스트 영문화)
+            # [전문 차트] Seaborn 스타일 + 고급 설정
+            import seaborn as sns
+            sns.set_style("whitegrid", {
+                'axes.grid': True,
+                'grid.color': '#e5e7eb',
+                'grid.linewidth': 0.8,
+                'axes.edgecolor': '#9ca3af',
+                'axes.linewidth': 1.2
+            })
+            
             plt.rcParams['font.family'] = 'sans-serif'
             plt.rcParams['axes.unicode_minus'] = False
             
-            fig, ax = plt.subplots(figsize=(14, 8), facecolor='white')
-            # 배경색 제거 (깔끔한 흰색)
-            ax.set_facecolor('white')
+            fig, ax = plt.subplots(figsize=(16, 9), facecolor='white', dpi=120)
+            ax.set_facecolor('#fafafa')
             
             # 값을 억원 단위로 변환 (가독성 향상)
             def convert_to_eok(value):
@@ -952,17 +547,9 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                 result = re.sub(r'\s+', ' ', result).strip()
                 return result
             
-            # 세련된 색상 팔레트 (채도 조정)
-            colors = [
-                '#4f46e5',  # Indigo
-                '#ef4444',  # Red
-                '#10b981',  # Emerald
-                '#f59e0b',  # Amber
-                '#8b5cf6',  # Violet
-                '#06b6d4',  # Cyan
-                '#ec4899',  # Pink
-                '#14b8a6'   # Teal
-            ]
+            # [세련된 색상 팔레트] Desaturated professional palette
+            # Seaborn의 'muted' 팔레트 사용 (차분하고 전문적)
+            colors = sns.color_palette("muted", 10).as_hex()
             
             # [핵심 수정 2] y_cols를 동적으로 설정하여 여러 계정 그리기 지원
             if not y_cols or y_cols == ['v.value']:
@@ -976,87 +563,78 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                         account_en = translate_to_english(account)
                         
                         if chart_type == 'line':
+                            # [세련된 스타일] 적당한 굵기의 라인
                             line = ax.plot(subset[x_col], subset['v.value_eok'], 
-                                   marker='o', label=account_en, linewidth=1.8, 
-                                   markersize=6, color=color, alpha=0.9)
-                            # 데이터 포인트 위에 값 표시 (반투명 배경)
+                                   marker='o', label=account_en, linewidth=1.5, 
+                                   markersize=7, color=color, alpha=0.85,
+                                   markeredgecolor='white', markeredgewidth=1.2)
+                            # [개선된 값 표시] 흰색 배경 + 검은 테두리로 가독성 극대화
                             for x, y in zip(subset[x_col], subset['v.value_eok']):
-                                ax.annotate(f'{int(y):,}', 
-                                          (x, y), 
-                                          textcoords="offset points",
-                                          xytext=(0, 8),
-                                          ha='center',
-                                          fontsize=8,
-                                          color='#1f2937',
-                                          fontweight='600',
-                                          bbox=dict(boxstyle='round,pad=0.3', 
-                                                   facecolor='white', 
-                                                   edgecolor=color,
-                                                   alpha=0.8,
-                                                   linewidth=1))
+                                ax.text(x, y, f'{int(y)}', 
+                                       ha='center', va='bottom',
+                                       fontsize=10,
+                                       color='#000000',
+                                       fontweight='bold',
+                                       bbox=dict(facecolor='white', 
+                                               edgecolor='#d1d5db',
+                                               boxstyle='round,pad=0.4',
+                                               alpha=0.95))
                         elif chart_type == 'bar':
                             bars = ax.bar(subset[x_col], subset['v.value_eok'], 
-                                  label=account_en, alpha=0.85, color=color, edgecolor='white', linewidth=1.2)
-                            # 바 위에 값 표시 (반투명 배경)
+                                  label=account_en, alpha=0.9, color=color, 
+                                  edgecolor='white', linewidth=2)
+                            # [개선된 값 표시] 흰색 배경으로 가독성 향상
                             for bar in bars:
                                 height = bar.get_height()
-                                ax.annotate(f'{int(height):,}',
-                                          xy=(bar.get_x() + bar.get_width() / 2, height),
-                                          xytext=(0, 5),
-                                          textcoords="offset points",
-                                          ha='center', 
-                                          va='bottom',
-                                          fontsize=8,
-                                          color='#1f2937',
-                                          fontweight='600',
-                                          bbox=dict(boxstyle='round,pad=0.3', 
-                                                   facecolor='white', 
-                                                   edgecolor=color,
-                                                   alpha=0.8,
-                                                   linewidth=1))
+                                ax.text(bar.get_x() + bar.get_width() / 2, height,
+                                       f'{int(height)}',
+                                       ha='center', va='bottom',
+                                       fontsize=10,
+                                       color='#000000',
+                                       fontweight='bold',
+                                       bbox=dict(facecolor='white', 
+                                               edgecolor='#d1d5db',
+                                               boxstyle='round,pad=0.4',
+                                               alpha=0.95))
                     if len(unique_accounts) > 1:
-                        ax.legend(fontsize=11, frameon=True, shadow=True, fancybox=True)
+                        ax.legend(fontsize=12, frameon=True, shadow=False, 
+                                 fancybox=False, loc='upper left',
+                                 edgecolor='#d1d5db', facecolor='white',
+                                 framealpha=0.95)
                 else:
                     # 기본 단순 차트
                     df['v.value_eok'] = df['v.value'].apply(convert_to_eok)
                     if chart_type == 'line':
                         ax.plot(df[x_col], df['v.value_eok'], marker='o', 
-                               linewidth=1.8, markersize=6, color=colors[0], alpha=0.9)
-                        # 데이터 포인트 위에 값 표시 (반투명 배경)
+                               linewidth=1.5, markersize=7, color=colors[0], alpha=0.85,
+                               markeredgecolor='white', markeredgewidth=1.2)
+                        # [개선된 값 표시]
                         for x, y in zip(df[x_col], df['v.value_eok']):
-                            ax.annotate(f'{int(y):,}', 
-                                      (x, y), 
-                                      textcoords="offset points",
-                                      xytext=(0, 8),
-                                      ha='center',
-                                      fontsize=8,
-                                      color='#1f2937',
-                                      fontweight='600',
-                                      bbox=dict(boxstyle='round,pad=0.3', 
-                                               facecolor='white', 
-                                               edgecolor=colors[0],
-                                               alpha=0.8,
-                                               linewidth=1))
+                            ax.text(x, y, f'{int(y)}', 
+                                   ha='center', va='bottom',
+                                   fontsize=10,
+                                   color='#000000',
+                                   fontweight='bold',
+                                   bbox=dict(facecolor='white', 
+                                           edgecolor='#d1d5db',
+                                           boxstyle='round,pad=0.4',
+                                           alpha=0.95))
                     elif chart_type == 'bar':
                         bars = ax.bar(df[x_col], df['v.value_eok'], 
-                              alpha=0.85, color=colors[0], edgecolor='white', linewidth=1.2)
-                        # 바 위에 값 표시 (반투명 배경)
+                              alpha=0.9, color=colors[0], edgecolor='white', linewidth=2)
+                        # [개선된 값 표시]
                         for bar in bars:
                             height = bar.get_height()
-                            ax.annotate(f'{int(height):,}',
-                                      xy=(bar.get_x() + bar.get_width() / 2, height),
-                                      xytext=(0, 5),
-                                      textcoords="offset points",
-                                      ha='center', 
-                                      va='bottom',
-                                      fontsize=8,
-                                      color='#1f2937',
-                                      fontweight='600',
-                                      bbox=dict(boxstyle='round,pad=0.3', 
-                                               facecolor='white', 
-                                               edgecolor=colors[0],
-                                               alpha=0.8,
-                                               linewidth=1))
+                            ax.text(bar.get_x() + bar.get_width() / 2, height,
+                                   f'{int(height)}',
+                                   ha='center', va='bottom',
+                                   fontsize=10,
+                                   color='#000000',
+                                   fontweight='bold',
+                                   bbox=dict(facecolor='white', 
+                                           edgecolor='#d1d5db',
+                                           boxstyle='round,pad=0.4',
+                                           alpha=0.95))
             else:
                 # y_cols가 명시적으로 주어지면 기존 방식대로 그림
                 for idx, y_col in enumerate(y_cols):
@@ -1065,64 +643,57 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                     
                     if chart_type == 'line':
                         ax.plot(df[x_col], df[y_col], marker='o', label=y_col_en,
-                               linewidth=1.8, markersize=6, color=color, alpha=0.9)
-                        # 데이터 포인트 위에 값 표시 (반투명 배경)
+                               linewidth=1.5, markersize=7, color=color, alpha=0.85,
+                               markeredgecolor='white', markeredgewidth=1.2)
+                        # [개선된 값 표시]
                         for x, y in zip(df[x_col], df[y_col]):
-                            ax.annotate(f'{int(y):,}', 
-                                      (x, y), 
-                                      textcoords="offset points",
-                                      xytext=(0, 8),
-                                      ha='center',
-                                      fontsize=8,
-                                      color='#1f2937',
-                                      fontweight='600',
-                                      bbox=dict(boxstyle='round,pad=0.3', 
-                                               facecolor='white', 
-                                               edgecolor=color,
-                                               alpha=0.8,
-                                               linewidth=1))
+                            ax.text(x, y, f'{int(y)}', 
+                                   ha='center', va='bottom',
+                                   fontsize=10,
+                                   color='#000000',
+                                   fontweight='bold',
+                                   bbox=dict(facecolor='white', 
+                                           edgecolor='#d1d5db',
+                                           boxstyle='round,pad=0.4',
+                                           alpha=0.95))
                     elif chart_type == 'bar':
                         bars = ax.bar(df[x_col], df[y_col], label=y_col_en, 
-                              alpha=0.85, color=color, edgecolor='white', linewidth=1.2)
-                        # 바 위에 값 표시 (반투명 배경)
+                              alpha=0.9, color=color, edgecolor='white', linewidth=2)
+                        # [개선된 값 표시]
                         for bar in bars:
                             height = bar.get_height()
-                            ax.annotate(f'{int(height):,}',
-                                      xy=(bar.get_x() + bar.get_width() / 2, height),
-                                      xytext=(0, 5),
-                                      textcoords="offset points",
-                                      ha='center', 
-                                      va='bottom',
-                                      fontsize=8,
-                                      color='#1f2937',
-                                      fontweight='600',
-                                      bbox=dict(boxstyle='round,pad=0.3', 
-                                               facecolor='white', 
-                                               edgecolor=color,
-                                               alpha=0.8,
-                                               linewidth=1))
+                            ax.text(bar.get_x() + bar.get_width() / 2, height,
+                                   f'{int(height)}',
+                                   ha='center', va='bottom',
+                                   fontsize=10,
+                                   color='#000000',
+                                   fontweight='bold',
+                                   bbox=dict(facecolor='white', 
+                                           edgecolor='#d1d5db',
+                                           boxstyle='round,pad=0.4',
+                                           alpha=0.95))
                 if len(y_cols) > 1:
-                    ax.legend(fontsize=11, frameon=True, shadow=True, fancybox=True)
+                    ax.legend(fontsize=12, frameon=True, shadow=False, 
+                             fancybox=False, loc='upper left',
+                             edgecolor='#d1d5db', facecolor='white',
+                             framealpha=0.95)
 
-            # 차트 스타일링 (모든 텍스트 영문화)
-            title_en = translate_to_english(title).strip()
-            if not title_en or title_en == title:
-                title_en = 'Financial Data Chart'
+            # [차트 타이틀 제거] 한글 폰트 문제 완전 해결 + 미니멀 디자인
+            # 타이틀 없이 축 레이블만으로 충분
             
-            ax.set_title(title_en, fontsize=18, fontweight='bold', pad=20)
-            ax.set_xlabel('Month' if x_col == 'p.month' else x_col, fontsize=13, fontweight='600')
-            ax.set_ylabel('Amount (100M KRW)', fontsize=13, fontweight='600')
+            ax.set_xlabel('Month', fontsize=14, fontweight='600', color='#374151')
+            ax.set_ylabel('Amount (100M KRW)', fontsize=14, fontweight='600', color='#374151')
             
-            # 그리드 제거 (깔끔한 차트)
-            ax.grid(False)
+            # [Seaborn 그리드] 이미 적용됨 (whitegrid)
+            ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.8)
             
-            # 축 스타일링 (미니멀)
+            # [전문 축 스타일]
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
-            ax.spines['left'].set_color('#dddddd')
-            ax.spines['left'].set_linewidth(1.5)
-            ax.spines['bottom'].set_color('#dddddd')
-            ax.spines['bottom'].set_linewidth(1.5)
+            ax.spines['left'].set_color('#9ca3af')
+            ax.spines['left'].set_linewidth(1.2)
+            ax.spines['bottom'].set_color('#9ca3af')
+            ax.spines['bottom'].set_linewidth(1.2)
             
             # Y축 포맷팅 (천 단위 구분 쉼표)
             from matplotlib.ticker import FuncFormatter
@@ -1179,7 +750,10 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             filename = f"chart_{timestamp}.png"
             filepath = os.path.join(self.output_dir, filename)
             
-            plt.savefig(filepath, dpi=150, bbox_inches='tight')
+            # [전문 품질] 고해상도 저장
+            plt.savefig(filepath, dpi=200, bbox_inches='tight', 
+                       facecolor='white', edgecolor='none',
+                       pad_inches=0.2)
             plt.close(fig)
             
             logging.info(f"차트 저장 완료: {filename}")
@@ -1492,19 +1066,13 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             print(f"[DEBUG] Gemini API 호출 시작 (지식 제공)...")
             logging.debug("지식 제공 API 호출 중")
             
+            # JSON에서 프롬프트 템플릿 로드
+            prompt_template = self._load_prompt_template('internal_prompts.general_knowledge_qa_prompt.template')
+            if not prompt_template:
+                prompt_template = "당신은 재무/경영 전문가입니다. 다음 질문에 답변해주세요:\n\n{question}"
+            
             response = model_simple.generate_content(
-                f"""당신은 재무/경영 전문가입니다. 다음 질문에 상세하고 친절하게 한국어로 답변해주세요:
-
-{question}
-
-답변 시:
-- 정의와 개념을 명확히 설명
-- 실무적 의미와 활용 방법 제공
-- 구체적인 예시 포함
-- 일반적인 기준이나 업계 평균 언급 (있다면)
-- 3-5 문단으로 충분히 상세하게
-
-전문적이지만 이해하기 쉽게 설명해주세요.""",
+                prompt_template.format(question=question),
                 generation_config=genai.types.GenerationConfig(
                     max_output_tokens=1500,
                     temperature=0.3
@@ -1595,7 +1163,9 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
                     rows = []
                     for line in lines[table_start+2:]:  # 헤더와 구분자 건너뛰기
                         if '|' in line:
-                            rows.append([r.strip() for r in line.strip('|').split('|')])
+                            # 구분자 행 필터링 (:--, :---, 등)
+                            if not all(cell.strip().replace(':', '').replace('-', '').strip() == '' for cell in line.strip('|').split('|')):
+                                rows.append([r.strip() for r in line.strip('|').split('|')])
                     
                     # InteractiveTable을 위한 구조
                     content_blocks.append({
@@ -1722,19 +1292,21 @@ When user asks "그래프로", "차트로", "시각화" after a data query:
             return [{"type": "text", "content": final_answer}]
     
     def _determine_level(self, user_query):
-        """LLM을 활용한 전사 vs 사업별 레벨 판단 (개선)"""
-        level_detection_prompt = f"""Analyze this user query: "{user_query}"
+        """LLM을 활용한 전사 vs 사업별 레벨 판단 (JSON 기반)"""
+        # system_prompt.json에서 level_detection 프롬프트 로드
+        prompt_json_path = os.path.join(self.base_dir, 'system_prompt.json')
+        try:
+            with open(prompt_json_path, 'r', encoding='utf-8') as f:
+                prompt_config = json.load(f)
+            level_detection_prompt = prompt_config['level_detection']['prompt_template'].format(user_query=user_query)
+        except Exception as e:
+            logging.warning(f"Failed to load level_detection from system_prompt.json: {e}")
+            # Fallback to hardcoded prompt
+            level_detection_prompt = f"""Analyze this user query: "{user_query}"
 
 Determine if the user wants:
-- CORPORATE: Company-wide totals (회사 전체, 연결/별도 기준, 분기/연간 합계)
-  Keywords: 회사 비교, 전년 대비, 분기, 연간, 연결 기준, 별도 기준, 총매출, 전체
-  Examples: "일렉트릭과 전선의 매출", "3분기 영업이익", "연결 기준 자산", "연간 매출"
-  
-- SEGMENT: Business unit/segment queries (사업 목록, 사업별 상세, 포트폴리오)
-  Keywords: 사업별, 부문별, 제품군별, 포트폴리오, "어떤 사업", "사업 항목", "사업은", CIC별
-  Examples: "어떤 사업이 있어?", "사업 항목은?", "사업별 매출", "CIC별로"
-
-**IMPORTANT:** "어떤 사업", "사업 항목", "CIC별" → SEGMENT 레벨입니다!
+- CORPORATE: Company-wide totals
+- SEGMENT: Business unit/segment queries
 
 Respond with ONLY one word: CORPORATE or SEGMENT"""
 
@@ -1842,7 +1414,12 @@ Respond with ONLY one word: CORPORATE or SEGMENT"""
                 logging.warning(f"히스토리 크기 과다 ({len(history_text)}자). 요약 건너뛰고 초기화")
                 raise ValueError("History text is too long to summarize safely.")
             
-            summary_prompt = f"다음 대화를 3-5문장으로 요약:\n\n{history_text}\n\n핵심만 간결하게:"
+            # JSON에서 프롬프트 템플릿 로드
+            prompt_template = self._load_prompt_template('internal_prompts.history_summary_prompt.template')
+            if not prompt_template:
+                prompt_template = "다음 대화를 3-5문장으로 요약:\n\n{history_text}\n\n핵심만 간결하게:"
+            
+            summary_prompt = prompt_template.format(history_text=history_text)
             
             model_simple = genai.GenerativeModel('models/gemini-flash-lite-latest')
             response = model_simple.generate_content(
@@ -2144,7 +1721,16 @@ Step 2: 찾은 a.id를 실제 데이터 쿼리에 사용
                     available_columns = []
                 
                 # Case 1: 후속 작업 - 기존 chat 객체 재사용
-                current_prompt = f"""You are a focused tool-calling agent.
+                # JSON에서 프롬프트 템플릿 로드
+                prompt_template = self._load_prompt_template('internal_prompts.follow_up_action.template')
+                if prompt_template:
+                    current_prompt = prompt_template.format(
+                        user_query=user_query,
+                        available_columns=available_columns
+                    )
+                else:
+                    # Fallback
+                    current_prompt = f"""You are a focused tool-calling agent.
 
 **Your ONLY task**: Fulfill this follow-up request using previously cached data.
 
@@ -2331,7 +1917,12 @@ Example:
                             
                             items_text = ", ".join(requested_items) if requested_items else "요청하신 데이터"
                             
-                            final_answer = f"""죄송합니다. {items_text}는 현재 Knowledge Graph에 존재하지 않습니다.
+                            # JSON에서 프롬프트 템플릿 로드
+                            prompt_template = self._load_prompt_template('internal_prompts.no_data_response.template')
+                            if prompt_template:
+                                final_answer = prompt_template.format(items_text=items_text)
+                            else:
+                                final_answer = f"""죄송합니다. {items_text}는 현재 Knowledge Graph에 존재하지 않습니다.
 
 조회한 쿼리는 문법적으로 정확했으나, 해당 데이터가 재무제표에 포함되어 있지 않아 결과가 0건 반환되었습니다.
 
@@ -2361,14 +1952,24 @@ Example:
                             print("[시스템] LLM이 쿼리를 수정하여 재시도합니다...\n")
                             
                             # 재시도 안내 (v3)
-                            retry_guidance = f"""
+                            # JSON에서 프롬프트 템플릿 로드
+                            prompt_template = self._load_prompt_template('internal_prompts.error_recovery.query_error')
+                            hints_text = chr(10).join('- ' + h for h in result.get('hints', []))
+                            if prompt_template:
+                                retry_guidance = prompt_template.format(
+                                    error_type=result.get('error_type'),
+                                    error_message=result.get('error', '')[:300],
+                                    hints=hints_text
+                                )
+                            else:
+                                retry_guidance = f"""
 [CRITICAL ERROR] Previous Cypher query FAILED.
 
 Error Type: {result.get('error_type')}
 Error Message: {result.get('error')[:300]}
 
 Hints:
-{chr(10).join('- ' + h for h in result.get('hints', []))}
+{hints_text}
 
 Please analyze the error carefully and generate a CORRECTED Cypher query.
 Remember:
@@ -2433,7 +2034,8 @@ Remember:
                             }
                             
                             # 간결한 확인 메시지만 요청
-                            current_prompt = f"""The data_visualization tool successfully created a chart.
+                            prompt_template = self._load_prompt_template('internal_prompts.tool_responses.chart_created')
+                            current_prompt = prompt_template if prompt_template else """The data_visualization tool successfully created a chart.
 
 Your ONLY job now is to inform the user that the chart has been created.
 Just say: "요청하신 차트를 생성했습니다."
@@ -2443,7 +2045,8 @@ Keep it simple and short.
                             continue
                         else:
                             print(f"[오류] {result.get('error')}\n")
-                            current_prompt = f"Chart generation failed: {result.get('error')}. Inform the user."
+                            prompt_template = self._load_prompt_template('internal_prompts.error_recovery.chart_error')
+                            current_prompt = prompt_template.format(error=result.get('error')) if prompt_template else f"Chart generation failed: {result.get('error')}. Inform the user."
                             continue
                             
                     elif tool_name == "generate_downloadable_link":
@@ -2453,7 +2056,8 @@ Keep it simple and short.
                             file_path = result['file_path']
                             print(f"[완료] 파일 저장: {file_path}\n")
                             # 간결한 확인 메시지만 요청
-                            current_prompt = f"""File successfully saved.
+                            prompt_template = self._load_prompt_template('internal_prompts.tool_responses.file_created')
+                            current_prompt = prompt_template.format(file_path=file_path) if prompt_template else f"""File successfully saved.
 Path: {file_path}
 
 Inform the user that the file has been created. Simple confirmation only.
@@ -2461,7 +2065,8 @@ Inform the user that the file has been created. Simple confirmation only.
                             continue
                         else:
                             print(f"[오류] {result.get('error')}\n")
-                            current_prompt = f"File creation failed: {result.get('error')}. Inform the user."
+                            prompt_template = self._load_prompt_template('internal_prompts.error_recovery.file_error')
+                            current_prompt = prompt_template.format(error=result.get('error')) if prompt_template else f"File creation failed: {result.get('error')}. Inform the user."
                             continue
                     
                     elif tool_name == "calculate_financial_ratio":
@@ -2469,7 +2074,14 @@ Inform the user that the file has been created. Simple confirmation only.
                         result = self.calculate_financial_ratio(**tool_args)
                         if result.get("status") == "success":
                             print(f"[완료] {result['ratio_name']}: {result['value']}{result.get('unit', '')}\n")
-                            current_prompt = f"""Financial ratio calculated successfully:
+                            prompt_template = self._load_prompt_template('internal_prompts.tool_responses.ratio_calculated')
+                            current_prompt = prompt_template.format(
+                                ratio_name=result['ratio_name'],
+                                value=result['value'],
+                                unit=result.get('unit', ''),
+                                formula=result.get('formula', ''),
+                                components=result.get('components', {})
+                            ) if prompt_template else f"""Financial ratio calculated successfully:
 
 Ratio: {result['ratio_name']}
 Value: {result['value']}{result.get('unit', '')}
@@ -2480,7 +2092,8 @@ Present this result to the user clearly, including the calculation details.
 """
                         else:
                             print(f"[오류] {result.get('message')}\n")
-                            current_prompt = f"Calculation failed: {result.get('message')}. Inform the user."
+                            prompt_template = self._load_prompt_template('internal_prompts.error_recovery.ratio_error')
+                            current_prompt = prompt_template.format(message=result.get('message')) if prompt_template else f"Calculation failed: {result.get('message')}. Inform the user."
                         continue
                     
                     elif tool_name == "get_definition":
@@ -2488,12 +2101,19 @@ Present this result to the user clearly, including the calculation details.
                         result = self.get_definition(**tool_args)
                         if result.get("found"):
                             print(f"[완료] {result['official_name']} 정의 찾음\n")
-                            current_prompt = f"""Definition found in config.json:
+                            prompt_template = self._load_prompt_template('internal_prompts.tool_responses.definition_found')
+                            formula_line = f"Formula: {result.get('formula')}" if result.get('formula') else ""
+                            current_prompt = prompt_template.format(
+                                official_name=result['official_name'],
+                                type=result.get('type'),
+                                description=result.get('description'),
+                                formula_line=formula_line
+                            ) if prompt_template else f"""Definition found in config.json:
 
 Term: {result['official_name']}
 Type: {result.get('type')}
 Description: {result.get('description')}
-{f"Formula: {result.get('formula')}" if result.get('formula') else ""}
+{formula_line}
 
 Present this definition to the user. This is our system's official definition, so it's more accurate than general knowledge.
 """
@@ -2501,7 +2121,10 @@ Present this definition to the user. This is our system's official definition, s
                             print(f"[정보] Config에서 찾을 수 없음. 일반 지식 사용\n")
                             # Fallback to general_knowledge_qa
                             knowledge_answer = self.general_knowledge_qa(tool_args.get("term", user_query))
-                            current_prompt = f"""Definition not in config, but here's general knowledge:
+                            prompt_template = self._load_prompt_template('internal_prompts.tool_responses.definition_not_found')
+                            current_prompt = prompt_template.format(
+                                knowledge_answer=knowledge_answer
+                            ) if prompt_template else f"""Definition not in config, but here's general knowledge:
 
 {knowledge_answer}
 
@@ -2515,7 +2138,12 @@ Present this to the user.
                         if result.get("found"):
                             ratios_list = "\n".join([f"- {r['name']} ({r['type']})" for r in result['ratios']])
                             print(f"[완료] {result['viewpoint']} 관점 비율 {result['count']}개 찾음\n")
-                            current_prompt = f"""Found {result['count']} ratios for {result['viewpoint']} viewpoint:
+                            prompt_template = self._load_prompt_template('internal_prompts.tool_responses.viewpoint_ratios')
+                            current_prompt = prompt_template.format(
+                                count=result['count'],
+                                viewpoint=result['viewpoint'],
+                                ratios_list=ratios_list
+                            ) if prompt_template else f"""Found {result['count']} ratios for {result['viewpoint']} viewpoint:
 
 {ratios_list}
 
@@ -2523,8 +2151,9 @@ Present this list to the user. You can also ask which specific ratio they want t
 """
                         else:
                             print(f"[정보] {result.get('message')}\n")
-                            current_prompt = f"Viewpoint not found: {result.get('message')}. Inform the user."
-                        continue
+                            prompt_template = self._load_prompt_template('internal_prompts.error_recovery.viewpoint_error')
+                            current_prompt = prompt_template.format(message=result.get('message')) if prompt_template else f"Viewpoint not found: {result.get('message')}. Inform the user."
+                            continue
                     
                     elif tool_name == "general_knowledge_qa":
                         print("[작업] 재무/경영 지식을 검색하고 있습니다...")
@@ -2533,7 +2162,10 @@ Present this list to the user. You can also ask which specific ratio they want t
                         result = {"status": "success", "answer": knowledge_answer}
                         print(f"[완료] 지식 답변 생성\n")
                         # 지식 답변은 그 자체가 최종 답변
-                        current_prompt = f"""General knowledge answer retrieved:
+                        prompt_template = self._load_prompt_template('internal_prompts.tool_responses.general_knowledge')
+                        current_prompt = prompt_template.format(
+                            knowledge_answer=knowledge_answer
+                        ) if prompt_template else f"""General knowledge answer retrieved:
 
 {knowledge_answer}
 
@@ -2621,9 +2253,21 @@ Present this information to the user in a clear and helpful way. No special form
                                 print("[DEBUG] SEGMENT 데이터 감지 - 집계 건너뜀")
                                 logging.info("SEGMENT 레벨 데이터 - 사전 집계 생략")
                                 
-                                # 간단한 CSV로 변환만
+                                # [숫자 포맷 개선] v.value가 있으면 억원 단위로 변환
+                                if 'v.value' in df.columns:
+                                    df['v.value_억원'] = df['v.value'].apply(
+                                        lambda x: f"{x/100000000:,.1f}" if pd.notna(x) and x != 0 else "0"
+                                    )
+                                
+                                # CSV로 변환
                                 data_csv = df.to_csv(index=False)
-                                tool_result_text = f"""
+                                
+                                # JSON에서 프롬프트 템플릿 로드
+                                prompt_template = self._load_prompt_template('internal_prompts.segment_data_delivery.template')
+                                if prompt_template:
+                                    tool_result_text = prompt_template.format(data_csv=data_csv)
+                                else:
+                                    tool_result_text = f"""
 [SEGMENT Data - No Pre-processing]
 
 The query returned SEGMENT-level data (business units/items).
@@ -2708,12 +2352,14 @@ For numerical queries, use tables.
                             # 결과 병합
                             if summary_parts:
                                 summary_df = pd.concat(summary_parts, ignore_index=True)
-                                # 모든 숫자 값 컬럼에 형식 적용
+                                # [숫자 포맷 개선] 억원 단위로 변환 + 포맷팅
                                 for col in value_columns:
                                     if col in summary_df.columns:
-                                        summary_df[col] = summary_df[col].apply(lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) else x)
+                                        summary_df[col] = summary_df[col].apply(
+                                            lambda x: f"{x/100000000:,.1f}억원" if isinstance(x, (int, float)) and x != 0 else "0"
+                                        )
                                 summary_md = summary_df.to_markdown(index=False)
-                                logging.info("지능적 집계 완료 (SUM/LAST 규칙, 동적 컬럼)")
+                                logging.info("지능적 집계 완료 (SUM/LAST 규칙, 동적 컬럼, 억원 단위 변환)")
                             else:
                                 summary_md = "집계 불가"
                             print("[DEBUG] 1. 연간 요약 집계 완료.")
@@ -2754,7 +2400,17 @@ For numerical queries, use tables.
                         
                         # 3. LLM에게 가공된 데이터 전달
                         print("[DEBUG] 3. LLM 프롬프트 생성 시작...")
-                        tool_result_text = f"""
+                        
+                        # JSON에서 프롬프트 템플릿 로드
+                        prompt_template = self._load_prompt_template('internal_prompts.corporate_data_delivery.template')
+                        if prompt_template:
+                            tool_result_text = prompt_template.format(
+                                summary_md=summary_md,
+                                monthly_format=monthly_format,
+                                monthly_csv=monthly_csv
+                            )
+                        else:
+                            tool_result_text = f"""
 [Pre-processed Data]
 
 **Annual Summary (Pre-aggregated):**

@@ -12,8 +12,12 @@ import hashlib
 NEO4J_URI = "bolt://127.0.0.1:7687"
 NEO4J_USER = "neo4j"
 NEO4J_PASSWORD = "vlvmffoq1!"
-DATA_DIR = "../data"
-CONFIG_FILE = "../packages/backend/config.json"
+
+# 스크립트 파일 위치 기준으로 경로 계산
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+CONFIG_FILE = os.path.join(PROJECT_ROOT, "packages", "backend", "config.json")
 
 class GMISKnowledgeGraphETL:
     """
@@ -47,22 +51,54 @@ class GMISKnowledgeGraphETL:
         with self._driver.session() as session:
             return session.execute_write(tx_function, **kwargs)
 
-    def run_etl_pipeline(self, clear_db=True):
-        """ETL 파이프라인 전체를 순서대로 실행합니다."""
+    def run_etl_pipeline(self, clear_db=True, only_segments=False):
+        """
+        ETL 파이프라인 전체를 순서대로 실행합니다.
+        
+        Args:
+            clear_db: True면 전체 DB 삭제 후 재구축, False면 증분 업데이트
+            only_segments: True면 사업별 데이터만 재처리 (속도 최적화)
+        """
         print("\n" + "="*70)
-        print("  GMIS Knowledge Graph ETL Pipeline v5")
+        if only_segments:
+            print("  GMIS Knowledge Graph ETL Pipeline v5 (Segment Only)")
+        else:
+            print("  GMIS Knowledge Graph ETL Pipeline v5")
         print("="*70)
-        if clear_db: self._clear_database()
+        
+        if clear_db: 
+            self._clear_database()
+        
         self._create_constraints_and_indexes()
-        self._load_knowledge_layer()
-        self._process_main_files()
+        
+        if not only_segments:
+            self._load_knowledge_layer()
+            self._process_main_files()
+        else:
+            print("\n[정보] Segment 데이터만 재처리합니다 (Main 데이터 건너뜀)")
+        
         self._process_segment_files()
         self._build_post_relations()
         print("\n[완료] 모든 ETL 파이프라인 작업이 성공적으로 완료되었습니다.")
 
     def _clear_database(self):
         print("\n--- 1. 데이터베이스 초기화 ---")
-        self._execute_write(lambda tx: tx.run("MATCH (n) DETACH DELETE n"))
+        print("   - 대용량 데이터 삭제 중 (배치 처리)...")
+        
+        # [메모리 안전] 배치로 삭제
+        with self._driver.session() as session:
+            while True:
+                result = session.run("""
+                    MATCH (n)
+                    WITH n LIMIT 10000
+                    DETACH DELETE n
+                    RETURN count(n) as deleted
+                """)
+                deleted = result.single()['deleted']
+                if deleted == 0:
+                    break
+                print(f"      - {deleted}개 노드 삭제 완료...")
+        
         print("   - 완료: 모든 노드와 관계가 삭제되었습니다.")
 
     def _create_constraints_and_indexes(self):
@@ -137,6 +173,7 @@ class GMISKnowledgeGraphETL:
             meta_columns = ['그룹', '4개사', '11개사', 'CIC', '회사', 'year', 'month', '반기', '분기', '계정', '항목', 'company_id']
             account_columns = [col for col in df.columns if col not in meta_columns and col in self.config['entities']['accounts']]
 
+            # Main 데이터는 복잡한 관계가 많아 행별 처리 유지 (Segment만 배치)
             for _, row in tqdm(df.iterrows(), total=len(df), desc=f"     {file}", unit=" rows"):
                 self._execute_write(self._tx_process_main_row, row_data=row.to_dict(), account_columns=account_columns, file_name=file)
 
@@ -242,15 +279,25 @@ class GMISKnowledgeGraphETL:
             df_long['value'] = df_long['value'].apply(self._parse_numeric)
             df_long.dropna(subset=['value'], inplace=True)
             
+            # [속도 개선] 0 값 필터링 (NULL로 간주)
+            df_long = df_long[df_long['value'] != 0]
+            
             # 회사 ID 매핑
             df_long['company_id'] = df_long['회사'].str.lower().map(mapper)
             df_long.dropna(subset=['company_id'], inplace=True)
 
-            # 행별 처리
-            for _, row in tqdm(df_long.iterrows(), total=len(df_long), desc=f"     {file_info['file']}", unit=" metrics"):
+            # [대폭 속도 개선] 배치 처리 (100개씩 - 메모리 안전)
+            batch_size = 100
+            total_rows = len(df_long)
+            batches = [df_long.iloc[i:i+batch_size] for i in range(0, total_rows, batch_size)]
+            
+            print(f"      총 {total_rows:,}개 레코드를 {len(batches)}개 배치로 처리")
+            
+            for batch_idx, batch_df in enumerate(tqdm(batches, desc=f"     {file_info['file']}", unit=" batch")):
+                batch_data = batch_df.to_dict('records')
                 self._execute_write(
-                    self._tx_process_segment_row, 
-                    row_data=row.to_dict(), 
+                    self._tx_process_segment_batch, 
+                    batch_data=batch_data,
                     file_name=file_info['file'],
                     format_type=file_info.get('format', 'DEFAULT'),
                     target_company_override=file_info.get('target_company')
@@ -521,7 +568,8 @@ class GMISKnowledgeGraphETL:
         metrics_to_create = []
         for col_name in account_columns:
             value = self._parse_numeric(row_data.get(col_name))
-            if value is not None:
+            # [속도 개선] 0 값 필터링 (NULL로 간주)
+            if value is not None and value != 0:
                 metrics_to_create.append({"acc_id": col_name, "value": value})
         
         if metrics_to_create:
@@ -566,6 +614,118 @@ class GMISKnowledgeGraphETL:
                     WHERE comp_metric IS NOT NULL
                     MERGE (kpi_metric)-[:DERIVED_FROM]->(comp_metric)
                 """, fsid=fs_id, source_acc=data['source_account'], components=data.get('related_accounts_for_context', []))
+    
+    def _tx_process_segment_batch(self, tx, batch_data, file_name, format_type='DEFAULT', target_company_override=None):
+        """사업별 손익 데이터 배치를 처리합니다 (속도 개선)"""
+        if not batch_data:
+            return
+        
+        # 배치 데이터 전처리
+        processed_batch = []
+        
+        for row_data in batch_data:
+            company_id = row_data['company_id']
+            year, month = int(row_data['year']), int(row_data['month'])
+            segment_name = row_data['segment_name']
+            account_name = row_data['account_name']
+            region = row_data['region']
+            is_cumulative = row_data['is_cumulative']
+            value = row_data['value']
+            
+            # 사업별 손익은 항상 별도(SEPARATE) 재무제표 기준이며, 손익계산서(IS)입니다.
+            scope_str, type_str = 'SEPARATE', 'IS'
+            class_str = 'ACTUAL' if row_data['항목'] == '실적' else 'PLAN'
+            fs_id = f"{company_id}_{year}{month:02d}_{type_str}_{scope_str}_{class_str}"
+            
+            # CIC 매핑 로직
+            target_company_id = company_id
+            
+            if format_type == 'CIC_DIRECT' and target_company_override:
+                target_company_id = target_company_override
+                fs_id = f"{target_company_id}_{year}{month:02d}_{type_str}_{scope_str}_{class_str}"
+            elif company_id == "ELECTRIC" and format_type == 'ELECTRIC_CIC':
+                inferred_cic = self._infer_cic_for_segment(company_id, segment_name)
+                if inferred_cic:
+                    target_company_id = inferred_cic
+                    fs_id = f"{target_company_id}_{year}{month:02d}_{type_str}_{scope_str}_{class_str}"
+            
+            # Account ID 매핑
+            account_id = self._get_account_id_for_segment(account_name)
+            
+            # BusinessSegment ID
+            segment_id = f"{target_company_id}_{segment_name.replace(' ', '_')}"
+            
+            # Metric ID
+            metric_id = f"{fs_id}_{segment_name}_{account_name}"
+            
+            # ValueObservation ID
+            value_obs_id = f"{metric_id}_{region}"
+            
+            # Period ID
+            period_id = f"{year}{month:02d}"
+            
+            processed_batch.append({
+                'aid': account_id,
+                'aname': account_name,
+                'target_cid': target_company_id,
+                'fsid': fs_id,
+                'pid': period_id,
+                'year': year,
+                'month': month,
+                'seg_id': segment_id,
+                'seg_name': segment_name,
+                'mid': metric_id,
+                'vid': value_obs_id,
+                'region': region,
+                'is_cumulative': is_cumulative,
+                'value': value,
+                'fname': file_name
+            })
+        
+        # Account 노드 먼저 생성 (segment_ 접두사인 것들)
+        unique_accounts = {item['aid']: item['aname'] for item in processed_batch if item['aid'].startswith('segment_')}
+        if unique_accounts:
+            tx.run("""
+                UNWIND $accounts AS acc
+                MERGE (a:Account {id: acc.id})
+                ON CREATE SET 
+                    a.name = acc.name,
+                    a.category = 'SEGMENT_IS',
+                    a.aggregation = 'SUM',
+                    a.official_name = acc.name,
+                    a.description = '사업별 손익에서 자동 생성된 계정입니다.'
+            """, accounts=[{'id': aid, 'name': aname} for aid, aname in unique_accounts.items()])
+        
+        # 배치 데이터 일괄 처리 (UNWIND 사용)
+        tx.run("""
+            UNWIND $batch AS item
+            
+            MATCH (a:Account {id: item.aid})
+            MATCH (c) WHERE c.id = item.target_cid AND (c:Company OR c:CIC)
+            
+            MERGE (fs:FinancialStatement {id: item.fsid})
+            MERGE (bs:BusinessSegment {id: item.seg_id})
+            ON CREATE SET bs.name = item.seg_name, bs.company_id = item.target_cid
+            
+            MERGE (p:Period {id: item.pid})
+            ON CREATE SET p.year = item.year, p.month = item.month
+            
+            MERGE (bs)-[:PART_OF]->(c)
+            MERGE (m:Metric {id: item.mid})
+            MERGE (v:ValueObservation {id: item.vid})
+            ON CREATE SET 
+                v.metric_id = item.mid,
+                v.region = item.region,
+                v.source_file = item.fname,
+                v.timestamp = datetime()
+            SET v += CASE WHEN item.is_cumulative THEN {cumulative_value: item.value} ELSE {value: item.value} END
+            
+            MERGE (fs)-[:CONTAINS]->(m)
+            MERGE (fs)-[:FOR_PERIOD]->(p)
+            MERGE (m)-[:INSTANCE_OF_RULE]->(a)
+            MERGE (m)-[:HAS_OBSERVATION]->(v)
+            MERGE (m)-[:FOR_SEGMENT]->(bs)
+        """, batch=processed_batch)
     
     def _tx_process_segment_row(self, tx, row_data, file_name, format_type='DEFAULT', target_company_override=None):
         """사업별 손익 데이터 행을 처리합니다."""
@@ -622,6 +782,9 @@ class GMISKnowledgeGraphETL:
         # ValueObservation ID: region만 포함 (하나의 노드에 value + cumulative_value 저장)
         value_obs_id = f"{metric_id}_{region}"
         
+        # Period ID 생성
+        period_id = f"{year}{month:02d}"
+        
         # 그래프 구축
         tx.run("""
             MATCH (a:Account {id: $aid})
@@ -629,6 +792,9 @@ class GMISKnowledgeGraphETL:
             MERGE (fs:FinancialStatement {id: $fsid})
             MERGE (bs:BusinessSegment {id: $seg_id})
             ON CREATE SET bs.name = $seg_name, bs.company_id = $target_cid
+            
+            MERGE (p:Period {id: $pid})
+            ON CREATE SET p.year = $year, p.month = $month
             
             MERGE (bs)-[:PART_OF]->(c)
             MERGE (m:Metric {id: $mid})
@@ -641,6 +807,7 @@ class GMISKnowledgeGraphETL:
             SET v += CASE WHEN $is_cumulative THEN {cumulative_value: $value} ELSE {value: $value} END
             
             MERGE (fs)-[:CONTAINS]->(m)
+            MERGE (fs)-[:FOR_PERIOD]->(p)
             MERGE (m)-[:INSTANCE_OF_RULE]->(a)
             MERGE (m)-[:HAS_OBSERVATION]->(v)
             MERGE (m)-[:FOR_SEGMENT]->(bs)
@@ -648,6 +815,9 @@ class GMISKnowledgeGraphETL:
             aid=account_id,
             target_cid=target_company_id,
             fsid=fs_id,
+            pid=period_id,
+            year=year,
+            month=month,
             seg_id=segment_id,
             seg_name=segment_name,
             mid=metric_id,
@@ -660,11 +830,13 @@ class GMISKnowledgeGraphETL:
 
     def _tx_build_segment_shortcuts(self, tx):
         """
-        Company가 CIC를 거치지 않고 모든 하위 BusinessSegment에 직접 접근할 수 있도록
+        Company와 CIC가 모든 하위 BusinessSegment에 직접 접근할 수 있도록
         단축 관계(:HAS_ALL_SEGMENTS)를 생성합니다.
         
-        예: ELECTRIC -[:HAS_ALL_SEGMENTS]-> "저압기기" (전력CIC 소속이지만 직접 연결)
+        예: ELECTRIC -[:HAS_ALL_SEGMENTS]-> "저압기기"
+            전력CIC -[:HAS_ALL_SEGMENTS]-> "저압기기"
         """
+        # Company의 HAS_ALL_SEGMENTS 관계
         tx.run("""
             MATCH (company:Company)
             
@@ -681,6 +853,12 @@ class GMISKnowledgeGraphETL:
             WHERE bs IS NOT NULL
             
             MERGE (company)-[:HAS_ALL_SEGMENTS]->(bs)
+        """)
+        
+        # CIC의 HAS_ALL_SEGMENTS 관계 추가
+        tx.run("""
+            MATCH (cic:CIC)<-[:PART_OF]-(bs:BusinessSegment)
+            MERGE (cic)-[:HAS_ALL_SEGMENTS]->(bs)
         """)
 
     def _tx_build_post_relations(self, tx):
