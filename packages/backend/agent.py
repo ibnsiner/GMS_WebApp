@@ -221,17 +221,32 @@ Examples of IMPOSSIBLE queries:
 ❌ "연간 합계와 1분기 상세"
 
 Your Action for IMPOSSIBLE:
-Stop immediately and respond:
+Stop immediately and respond with this EXACT format (replace [placeholders] with actual values from user's question):
+
 ```
-귀하의 질문에는 [월별 데이터와 분기별 데이터/전사 데이터와 사업별 데이터]가 
+귀하의 질문에는 [월별/분기별/전사/사업별 - 실제 혼합된 것] 데이터가 
 혼합되어 있어 한 번에 처리하기 어렵습니다.
 
 번거로우시겠지만 나누어 질문해주시겠어요?
-1. [회사]의 [시간단위] [첫 번째 항목]
-2. [회사]의 [시간단위] [두 번째 항목]
+1. [실제 회사명]의 [실제 시간단위] [실제 첫 번째 지표명]
+2. [실제 회사명]의 [실제 시간단위] [실제 두 번째 지표명]
 
 먼저 어느 것을 확인하시겠습니까?
 ```
+
+**Example for "MnM의 월별 매출액과 분기별 영업이익":**
+```
+귀하의 질문에는 월별 데이터와 분기별 데이터가 혼합되어 있어 
+한 번에 처리하기 어렵습니다.
+
+번거로우시겠지만 나누어 질문해주시겠어요?
+1. MnM의 월별 매출액 추이
+2. MnM의 분기별 영업이익 합계
+
+먼저 어느 것을 확인하시겠습니까?
+```
+
+DO NOT use placeholders like [회사]. Extract actual values from user's question.
 DO NOT proceed to Tier 2. STOP here.
 
 **TIER 2: SOLVABLE Query (Execute Immediately)**
