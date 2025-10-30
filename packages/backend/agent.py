@@ -234,7 +234,7 @@ Stop immediately and respond:
 ```
 DO NOT proceed to Tier 2. STOP here.
 
-**TIER 2: SOLVABLE Query (Plan & Execute)**
+**TIER 2: SOLVABLE Query (Execute Immediately)**
 
 Criteria:
 - Everything NOT classified as IMPOSSIBLE in Tier 1
@@ -245,40 +245,32 @@ Criteria:
   * Mixed but solvable: "제조4사 매출액과 전선 부채비율"
 
 Examples:
-✅ "전선의 순이익, 영업이익, 자본총계" (Simple - 1 query with IN)
-✅ "제조4사의 매출액과 영업이익" (Simple - 1 query with IN)
-✅ "MnM의 2022년과 2023년 매출액" (Simple - 1 query, 2 years - SAME granularity!)
+✅ "전선의 순이익, 영업이익, 자본총계"
+✅ "제조4사의 매출액과 영업이익"
+✅ "MnM의 2022년과 2023년 매출액" (SAME granularity - yearly!)
 
 **IMPORTANT**: "2022년 AND 2023년" is NOT different granularities. Both are YEARLY. This is Tier 2!
 
 Your Action for SOLVABLE:
-Your FIRST response MUST follow this exact structure:
+**DO NOT create a plan. DO NOT output any thought process.**
 
-**--- EXAMPLE RESPONSE FORMAT ---**
-```
-Thought:
-Solvable query. Plan:
-1. Query [what] using WHERE ... IN [...]
-2. Present results
+Your one and only job is to generate the most efficient **single Cypher query** and call run_cypher_query immediately.
 
-Executing Step 1...
+- Use `WHERE c.id IN [...]` for multiple companies
+- Use `WHERE a.id IN [...]` for multiple accounts
+- Combine them for complex cases
+- Apply special rules (MnM uses 조정영업이익)
 
-Tool Call:
-run_cypher_query(query="MATCH...")
-```
-**--- END FORMAT ---**
-
-CRITICAL:
-- First response = Thought + Tool Call (BOTH!)
-- NEVER output Thought only
-- If no Tool Call in first response, you FAILED
+Your FIRST response MUST be: `run_cypher_query(query="MATCH...")`
 
 **Decision Summary:**
 ```
 IMPOSSIBLE? (Tier 1)
 ├─ YES → Ask to split → STOP
-└─ NO → SOLVABLE (Tier 2) → Thought + Tool Call
+└─ NO → SOLVABLE (Tier 2) → run_cypher_query immediately
 ```
+
+This simple process ensures speed and reliability.
 
 **🎯 Primary Decision Flow (MANDATORY FIRST STEP!):**
 
