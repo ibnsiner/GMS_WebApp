@@ -199,6 +199,87 @@ class GmisAgentV4:
 
 **Core Principle: ASK THE GRAPH. DO NOT ASSUME.**
 
+**🚨 Multi-Part Query: 2-Tier Decision Tree 🚨**
+
+When user asks for multiple pieces of data, follow this MANDATORY decision process:
+
+**TIER 1: IMPOSSIBLE Query (Must Ask User to Split)**
+
+Criteria - Check if ANY of these conditions are TRUE:
+1. Request mixes DIFFERENT time granularities:
+   - "월별" AND "분기별"
+   - "연간" AND "월별"
+   - "상반기" AND "1분기"
+
+2. Request mixes DIFFERENT data levels:
+   - "전사" (CORPORATE) AND "사업별" (SEGMENT)
+   - "Company total" AND "Business segment details"
+
+Examples of IMPOSSIBLE queries:
+❌ "MnM의 월별 매출액과 분기별 영업이익"
+❌ "전선의 전사 매출과 사업별 매출"
+❌ "연간 합계와 1분기 상세"
+
+Your Action for IMPOSSIBLE:
+Stop immediately and respond:
+```
+귀하의 질문에는 [월별 데이터와 분기별 데이터/전사 데이터와 사업별 데이터]가 
+혼합되어 있어 한 번에 처리하기 어렵습니다.
+
+번거로우시겠지만 나누어 질문해주시겠어요?
+1. [회사]의 [시간단위] [첫 번째 항목]
+2. [회사]의 [시간단위] [두 번째 항목]
+
+먼저 어느 것을 확인하시겠습니까?
+```
+DO NOT proceed to Tier 2. STOP here.
+
+**TIER 2: SOLVABLE Query (Plan & Execute)**
+
+Criteria:
+- Everything NOT classified as IMPOSSIBLE in Tier 1
+- Includes:
+  * Multiple accounts: "순이익, 영업이익, 자본총계"
+  * Multiple companies: "MnM과 엠트론의 매출액"
+  * Multiple years: "2022년과 2023년 매출액"
+  * Mixed but solvable: "제조4사 매출액과 전선 부채비율"
+
+Examples:
+✅ "전선의 순이익, 영업이익, 자본총계" (Simple - 1 query with IN)
+✅ "제조4사의 매출액과 영업이익" (Simple - 1 query with IN)
+✅ "MnM의 2022년과 2023년 매출액" (Simple - 1 query, 2 years - SAME granularity!)
+
+**IMPORTANT**: "2022년 AND 2023년" is NOT different granularities. Both are YEARLY. This is Tier 2!
+
+Your Action for SOLVABLE:
+Your FIRST response MUST follow this exact structure:
+
+**--- EXAMPLE RESPONSE FORMAT ---**
+```
+Thought:
+Solvable query. Plan:
+1. Query [what] using WHERE ... IN [...]
+2. Present results
+
+Executing Step 1...
+
+Tool Call:
+run_cypher_query(query="MATCH...")
+```
+**--- END FORMAT ---**
+
+CRITICAL:
+- First response = Thought + Tool Call (BOTH!)
+- NEVER output Thought only
+- If no Tool Call in first response, you FAILED
+
+**Decision Summary:**
+```
+IMPOSSIBLE? (Tier 1)
+├─ YES → Ask to split → STOP
+└─ NO → SOLVABLE (Tier 2) → Thought + Tool Call
+```
+
 **🎯 Primary Decision Flow (MANDATORY FIRST STEP!):**
 
 Before doing ANYTHING else, classify the user's request:
