@@ -253,11 +253,16 @@ Action: {config['query_classification']['tier2_solvable']['action']}
    Keywords: {', '.join(config['request_types']['follow_up']['keywords'])}
    Action: {config['request_types']['follow_up']['action']}
 
-2. **Data Query?**
+2. **Viewpoint Analysis?** (재무 관점 분석)
+   Keywords: {', '.join(config['request_types']['viewpoint_analysis']['keywords'])}
+   Action: {config['request_types']['viewpoint_analysis']['action']}
+   ⚠️ CRITICAL: {config['request_types']['viewpoint_analysis']['critical']}
+
+3. **Data Query?**
    Keywords: {', '.join(config['request_types']['data_query']['keywords'])}
    Action: {config['request_types']['data_query']['action']}
 
-3. **Knowledge Question?**
+4. **Knowledge Question?**
    Keywords: {', '.join(config['request_types']['knowledge_question']['keywords'])}
    Action: {config['request_types']['knowledge_question']['action']}
 
@@ -309,7 +314,24 @@ For CIC:
 {config['query_patterns']['segment']['list_segments_pattern']['cic_query']}
 ```
 
+**CRITICAL - CIC별 사업 목록 (일렉트릭만 해당):**
+{config['query_patterns']['segment']['list_segments_pattern']['cic_grouped_description']}
+```cypher
+{config['query_patterns']['segment']['list_segments_pattern']['cic_grouped_query']}
+```
+
+⚠️ Use PART_OF relationship (CIC -[:PART_OF]-> Company), NOT HAS_CIC!
+
 **🔍 Pattern 2: 개별 사업 데이터 조회**
+
+{config['query_patterns']['segment']['segment_name_critical']}
+
+Rules:
+{chr(10).join(f"- {rule}" for rule in config['query_patterns']['segment']['segment_name_rules'])}
+
+Examples:
+{chr(10).join(f"- {ex}" for ex in config['query_patterns']['segment']['segment_name_examples'])}
+
 Basic Query:
 ```cypher
 {config['query_patterns']['segment']['basic_query']}
@@ -350,6 +372,28 @@ Special Accounts:
 **📊 DATA AVAILABILITY:**
 - CORPORATE: Years {config['data_availability']['corporate']['years']}, No region property
 - SEGMENT: Primary year {config['data_availability']['segment']['primary_year']}, Has region: {config['data_availability']['segment']['regions']}
+
+**🎯 VIEWPOINT ANALYSIS (재무 관점 분석 - CRITICAL!):**
+
+{config['viewpoint_analysis']['critical_instruction']}
+
+Pattern: {config['viewpoint_analysis']['pattern']}
+
+Workflow:
+{chr(10).join(config['viewpoint_analysis']['workflow'])}
+
+❌ BAD: {config['viewpoint_analysis']['bad_example']}
+✅ GOOD: {config['viewpoint_analysis']['good_example']}
+
+**When user asks "~를 수익성 관점에서 분석해줘":**
+You MUST immediately:
+1. Call get_ratios_by_viewpoint('수익성')
+2. For EACH ratio returned, call run_cypher_query or calculate_financial_ratio
+3. Present ALL results together
+
+DO NOT stop after get_ratios_by_viewpoint!
+DO NOT ask user "어떤 지표를 분석해 드릴까요?"
+Just analyze ALL ratios automatically!
 
 **🔧 TOOLS:**
 {chr(10).join(f"- {tool['name']}: {tool['description']}" for tool in config['tools'])}
@@ -2296,73 +2340,113 @@ For numerical queries, use tables.
                         
                         # 요약 집계 (CORPORATE 전용)
                         try:
-                            # config에서 계정별 집계 규칙 가져오기
-                            account_agg_map = {
-                                data['official_name']: data.get('aggregation', 'SUM')
-                                for _, data in self.config.get('entities', {}).get('accounts', {}).items()
-                            }
-                            
-                            # 집계 규칙 매핑
-                            df['aggregation_type'] = df['a.name'].map(account_agg_map)
-                            
-                            # SUM과 LAST 데이터 분리
-                            df_sum = df[df['aggregation_type'] == 'SUM'].copy() if 'SUM' in df['aggregation_type'].values else pd.DataFrame()
-                            df_last = df[df['aggregation_type'] == 'LAST'].copy() if 'LAST' in df['aggregation_type'].values else pd.DataFrame()
-                            
-                            # 집계할 값 컬럼을 동적으로 결정
-                            value_columns = []
-                            calculation_columns = ['variance_pct', 'achievement_rate', 'ytd_total', 'quarterly_value']
-                            
-                            for col in df.columns:
-                                if col in calculation_columns:
-                                    continue  # 이미 계산된 컬럼은 집계하지 않음
-                                if 'value' in col.lower() or col in ['plan', 'actual']:
-                                    value_columns.append(col)
-                            
-                            if not value_columns:
-                                raise ValueError("집계할 값 컬럼을 찾을 수 없습니다.")
-                            
-                            print(f"[DEBUG] 감지된 값 컬럼: {value_columns}")
-                            logging.info(f"동적 컬럼 감지: {value_columns}")
-                            
-                            summary_parts = []
-                            
-                            # SUM 항목 집계 (IS 계정: 매출, 영업이익 등)
-                            if not df_sum.empty:
-                                # 연도별로 구분하여 집계
-                                group_cols = [col for col in ['c.name', 'p.year', 'a.name', 'statement_scope'] if col in df_sum.columns]
-                                # 존재하는 값 컬럼만 집계
-                                sum_value_cols = [col for col in value_columns if col in df_sum.columns]
-                                if sum_value_cols:
-                                    summary_sum = df_sum.groupby(group_cols)[sum_value_cols].sum().reset_index()
-                                    summary_parts.append(summary_sum)
-                                    logging.info(f"SUM 집계 완료: {len(df_sum)}개 레코드 → {len(summary_sum)}개 연도별 집계 (컬럼: {sum_value_cols})")
-                            
-                            # LAST 항목 집계 (BS 계정: 자산, 부채, 자기자본 등)
-                            if not df_last.empty:
-                                # 연도와 월 기준으로 정렬 후 그룹별 마지막 값 선택
-                                group_cols = [col for col in ['c.name', 'p.year', 'a.name', 'statement_scope'] if col in df_last.columns]
-                                last_value_cols = [col for col in value_columns if col in df_last.columns]
-                                summary_last = df_last.sort_values(['p.year', 'p.month']).groupby(group_cols, as_index=False).last()
-                                keep_cols = group_cols + last_value_cols
-                                summary_last = summary_last[[col for col in keep_cols if col in summary_last.columns]]
-                                summary_parts.append(summary_last)
-                                logging.info(f"LAST 집계 완료: {len(df_last)}개 레코드 → {len(summary_last)}개 연도별 기말값 (컬럼: {last_value_cols})")
-                            
-                            # 결과 병합
-                            if summary_parts:
-                                summary_df = pd.concat(summary_parts, ignore_index=True)
-                                # [숫자 포맷 개선] 억원 단위로 변환 + 포맷팅
-                                for col in value_columns:
-                                    if col in summary_df.columns:
-                                        summary_df[col] = summary_df[col].apply(
-                                            lambda x: f"{x/100000000:,.1f}억원" if isinstance(x, (int, float)) and x != 0 else "0"
-                                        )
-                                summary_md = summary_df.to_markdown(index=False)
-                                logging.info("지능적 집계 완료 (SUM/LAST 규칙, 동적 컬럼, 억원 단위 변환)")
+                            # [컬럼 존재 확인] a.name이 있는지 체크
+                            if 'a.name' not in df.columns:
+                                print("[DEBUG] 'a.name' 컬럼 없음 - CORPORATE 집계 건너뜀 (이미 집계된 데이터)")
+                                logging.info("'a.name' 컬럼 없음 - 사전 집계 건너뜀")
+                                summary_md = df.to_markdown(index=False)
                             else:
-                                summary_md = "집계 불가"
-                            print("[DEBUG] 1. 연간 요약 집계 완료.")
+                                # config에서 계정별 집계 규칙 가져오기
+                                account_agg_map = {
+                                    data['official_name']: data.get('aggregation', 'SUM')
+                                    for _, data in self.config.get('entities', {}).get('accounts', {}).items()
+                                }
+                                
+                                # 집계 규칙 매핑
+                                df['aggregation_type'] = df['a.name'].map(account_agg_map)
+                                
+                                # SUM과 LAST 데이터 분리
+                                df_sum = df[df['aggregation_type'] == 'SUM'].copy() if 'SUM' in df['aggregation_type'].values else pd.DataFrame()
+                                df_last = df[df['aggregation_type'] == 'LAST'].copy() if 'LAST' in df['aggregation_type'].values else pd.DataFrame()
+                                
+                                # 집계할 값 컬럼을 동적으로 결정
+                                value_columns = []
+                                calculation_columns = ['variance_pct', 'achievement_rate', 'ytd_total', 'quarterly_value']
+                                
+                                for col in df.columns:
+                                    if col in calculation_columns:
+                                        continue  # 이미 계산된 컬럼은 집계하지 않음
+                                    if 'value' in col.lower() or col in ['plan', 'actual']:
+                                        value_columns.append(col)
+                                
+                                if not value_columns:
+                                    raise ValueError("집계할 값 컬럼을 찾을 수 없습니다.")
+                                
+                                print(f"[DEBUG] 감지된 값 컬럼: {value_columns}")
+                                logging.info(f"동적 컬럼 감지: {value_columns}")
+                                
+                                summary_parts = []
+                                
+                                # SUM 항목 집계 (IS 계정: 매출, 영업이익 등)
+                                if not df_sum.empty:
+                                    # 연도별로 구분하여 집계
+                                    group_cols = [col for col in ['c.name', 'p.year', 'a.name', 'statement_scope'] if col in df_sum.columns]
+                                    # 존재하는 값 컬럼만 집계
+                                    sum_value_cols = [col for col in value_columns if col in df_sum.columns]
+                                    if sum_value_cols:
+                                        summary_sum = df_sum.groupby(group_cols)[sum_value_cols].sum().reset_index()
+                                        summary_parts.append(summary_sum)
+                                        logging.info(f"SUM 집계 완료: {len(df_sum)}개 레코드 → {len(summary_sum)}개 연도별 집계 (컬럼: {sum_value_cols})")
+                                
+                                # LAST 항목 집계 (BS 계정: 자산, 부채, 자기자본, 비율 등)
+                                if not df_last.empty:
+                                    print(f"[DEBUG] LAST 집계 대상: {len(df_last)}개 레코드")
+                                    print(f"[DEBUG] LAST 계정: {df_last['a.name'].unique().tolist()}")
+                                    
+                                    # 연도와 월 기준으로 정렬 후 그룹별 마지막 값 선택
+                                    group_cols = [col for col in ['c.name', 'p.year', 'a.name', 'statement_scope'] if col in df_last.columns]
+                                    last_value_cols = [col for col in value_columns if col in df_last.columns]
+                                    
+                                    # 정렬 후 기말값 선택
+                                    summary_last = df_last.sort_values(['p.year', 'p.month']).groupby(group_cols, as_index=False).last()
+                                    
+                                    print(f"[DEBUG] LAST 집계 후: {len(summary_last)}개")
+                                    print(f"[DEBUG] LAST 샘플 값: {summary_last['v.value'].tolist()}")
+                                    
+                                    keep_cols = group_cols + last_value_cols
+                                    summary_last = summary_last[[col for col in keep_cols if col in summary_last.columns]]
+                                    summary_parts.append(summary_last)
+                                    logging.info(f"LAST 집계 완료: {len(df_last)}개 레코드 → {len(summary_last)}개 연도별 기말값 (컬럼: {last_value_cols})")
+                                
+                                # 결과 병합
+                                if summary_parts:
+                                    summary_df = pd.concat(summary_parts, ignore_index=True)
+                                    
+                                    # [숫자 포맷 개선] 계정별로 적절한 단위 적용
+                                    # 비율 계정 확인 (%, 회 등)
+                                    ratio_accounts = ['영업이익률', '부채비율', '유동비율', '매출총이익률', '순이익률', 
+                                                     '자산회전율', '매출채권회전율', 'ROE']
+                                    
+                                    for col in value_columns:
+                                        if col in summary_df.columns:
+                                            # 계정명 확인해서 비율이면 그대로, 아니면 억원 변환
+                                            if 'a.name' in summary_df.columns:
+                                                def format_value(row):
+                                                    value = row[col]
+                                                    account_name = row.get('a.name', '')
+                                                    
+                                                    if not isinstance(value, (int, float)) or value == 0:
+                                                        return "0"
+                                                    
+                                                    # 비율/회전율 계정은 그대로 (%, 회)
+                                                    if any(ratio in account_name for ratio in ratio_accounts):
+                                                        return f"{value:,.2f}"
+                                                    # 금액 계정은 억원 변환
+                                                    else:
+                                                        return f"{value/100000000:,.1f}억원"
+                                                
+                                                summary_df[col] = summary_df.apply(format_value, axis=1)
+                                            else:
+                                                # a.name이 없으면 기본적으로 억원 변환
+                                                summary_df[col] = summary_df[col].apply(
+                                                    lambda x: f"{x/100000000:,.1f}억원" if isinstance(x, (int, float)) and x != 0 else "0"
+                                                )
+                                    
+                                    summary_md = summary_df.to_markdown(index=False)
+                                    logging.info("지능적 집계 완료 (SUM/LAST 규칙, 동적 컬럼, 단위별 포맷)")
+                                else:
+                                    summary_md = "집계 불가"
+                                print("[DEBUG] 1. 연간 요약 집계 완료.")
                         except Exception as e:
                             print(f"[ERROR] 요약 집계 실패: {e}")
                             logging.warning(f"요약 집계 실패: {e}", exc_info=True)
@@ -2374,7 +2458,7 @@ For numerical queries, use tables.
                             # 연도가 여러 개인지 확인
                             has_multiple_years = 'p.year' in df.columns and len(df['p.year'].unique()) > 1
                             
-                            if len(df['c.name'].unique()) > 1:
+                            if 'c.name' in df.columns and len(df['c.name'].unique()) > 1:
                                 # 다중 회사: PIVOT 테이블
                                 # 연도가 여러 개면 index에 year 포함
                                 index_cols = ['p.year', 'p.month'] if has_multiple_years else ['p.month']

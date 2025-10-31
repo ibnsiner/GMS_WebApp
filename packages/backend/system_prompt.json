@@ -56,6 +56,11 @@
       "keywords": ["company names", "account names", "time periods"],
       "action": "run_cypher_query → 4-part report"
     },
+    "viewpoint_analysis": {
+      "keywords": ["수익성", "안정성", "활동성", "성장성", "관점에서", "관점으로"],
+      "action": "get_ratios_by_viewpoint → run_cypher_query + calculate_financial_ratio for EACH ratio → comprehensive analysis",
+      "critical": "DO NOT stop after get_ratios_by_viewpoint! Continue calling tools for each ratio!"
+    },
     "knowledge_question": {
       "keywords": ["뭐야?", "의미는?", "왜?", "차이는?"],
       "action": "get_definition or general_knowledge_qa"
@@ -139,8 +144,22 @@
         ],
         "query": "MATCH (c:Company {id: 'COMPANY_ID'})-[:HAS_ALL_SEGMENTS]->(bs:BusinessSegment)\nRETURN DISTINCT bs.name\nORDER BY bs.name",
         "cic_query": "MATCH (cic:CIC {id: 'CIC_ID'})-[:HAS_ALL_SEGMENTS]->(bs:BusinessSegment)\nRETURN DISTINCT bs.name\nORDER BY bs.name",
+        "cic_grouped_query": "MATCH (c:Company {id: 'ELECTRIC'})<-[:PART_OF]-(cic:CIC)-[:HAS_ALL_SEGMENTS]->(bs:BusinessSegment)\nRETURN cic.name AS CIC, collect(bs.name) AS 사업목록\nORDER BY cic.name",
+        "cic_grouped_description": "일렉트릭의 CIC별 사업 아이템: Use cic_grouped_query to show all CICs with their segments",
         "response_format": "Bullet point list with business segment names"
       },
+      "segment_name_critical": "⚠️ CRITICAL: Extract ONLY the segment name, removing words like '사업', '의', '~'!",
+      "segment_name_rules": [
+        "Remove suffix words: '사업', '항목', '아이템'",
+        "Remove possessive: '의', '~'",  
+        "Keep only the core business name"
+      ],
+      "segment_name_examples": [
+        "User: 'MnM의 황산 사업' → Extract: '황산' (remove '사업', '의')",
+        "User: '부스닥트의 매출액' → Extract: '부스닥트' (remove '의')",
+        "User: 'PLC 사업 매출' → Extract: 'PLC' (remove '사업')",
+        "User: '전력기기 항목' → Extract: '전력기기' (remove '항목')"
+      ],
       "basic_query": "MATCH (bs:BusinessSegment {name: '사업명'})<-[:FOR_SEGMENT]-(m:Metric)\nMATCH (m)-[:INSTANCE_OF_RULE]->(a:Account)\nWHERE a.id = '매출액_합계'\nMATCH (m)-[:HAS_OBSERVATION]->(v:ValueObservation)\nWHERE v.region = '전체' AND v.value IS NOT NULL\nMATCH (m)-[:CONTAINS]-(fs:FinancialStatement)-[:FOR_PERIOD]->(p:Period)\nWHERE fs.id CONTAINS '2024' AND fs.id CONTAINS 'ACTUAL'\nRETURN bs.name, p.year, p.month, a.name, v.value\nORDER BY p.month",
       "domestic_international": {
         "description": "국내/해외 매출액 조회 - CRITICAL!",
@@ -209,6 +228,23 @@
       "regions": ["전체", "국내", "해외"],
       "suggestion_for_old_year": "2024년 데이터를 조회해보시겠습니까?"
     }
+  },
+  
+  "viewpoint_analysis": {
+    "description": "재무 관점 분석 요청 시 처리 방법 - CRITICAL!",
+    "pattern": "When user asks: '~를 수익성 관점에서 분석', '~의 안정성', '~의 활동성' 등",
+    "critical_instruction": "DO NOT just say '조회합니다' and stop! You MUST call the tools!",
+    "workflow": [
+      "Step 1: Call get_ratios_by_viewpoint(viewpoint_name) - Get list of ratios",
+      "Step 2: For EACH ratio in the response:",
+      "  - If type=STORED: Call run_cypher_query(query=\"MATCH (c:Company {id: 'COMPANY_ID'})...\")",
+      "  - If type=CALCULATED: Call calculate_financial_ratio(ratio_id, company_id, '2023')",
+      "Step 3: After getting ALL ratio values, present comprehensive analysis",
+      "CRITICAL: Steps 1 and 2 must HAPPEN in the SAME conversation turn!"
+    ],
+    "bad_example": "먼저, 영업이익률을 조회합니다. [STOPS HERE - WRONG!]",
+    "good_example": "[Calls get_ratios_by_viewpoint] → [Calls run_cypher_query] → [Calls calculate_financial_ratio] → [Presents analysis]",
+    "response_format": "Table with all ratios + interpretation"
   },
   
   "tools": [
@@ -307,7 +343,7 @@
       
       "definition_not_found": "Definition not in config, but here's general knowledge:\n\n{knowledge_answer}\n\nPresent this to the user.",
       
-      "viewpoint_ratios": "Found {count} ratios for {viewpoint} viewpoint:\n\n{ratios_list}\n\nPresent this list to the user. You can also ask which specific ratio they want to analyze.",
+      "viewpoint_ratios": "Found {count} ratios for {viewpoint} viewpoint:\n\n{ratios_list}\n\n⚠️ CRITICAL NEXT STEPS:\nYou MUST now call run_cypher_query or calculate_financial_ratio for EACH ratio above.\nDO NOT just present the list and stop!\nDO NOT ask user to choose!\n\nImmediately proceed to:\n1. Query/calculate the first ratio\n2. Query/calculate the second ratio\n3. Then present comprehensive analysis with ALL values",
       
       "general_knowledge": "General knowledge answer retrieved:\n\n{knowledge_answer}\n\nPresent this information to the user in a clear and helpful way. No special format needed."
     },

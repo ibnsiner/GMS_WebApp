@@ -259,7 +259,12 @@
       "ROE": { "official_name": "자기자본이익률 (ROE)", "aliases": ["ROE", "자기자본수익률"], "viewpoint": "PROFITABILITY", "description": "주주가 투자한 자기자본에 대한 수익률을 나타내는 지표입니다.", "type": "CALCULATED", "formula_human": "(당기순이익 / 자기자본_합계) * 100", "components": ["당기순이익", "자기자본_합계"], "unit": "%" },
       "관리지표_부채비율(%)": { "official_name": "부채비율", "aliases": ["부채비율"], "viewpoint": "STABILITY", "description": "기업의 재무구조 안정성을 나타내는 대표적인 지표입니다.", "type": "STORED", "source_account": "관리지표_부채비율(%)", "related_accounts_for_context": ["부채_합계", "자기자본_합계"] },
       "총자산증가율": { "official_name": "총자산 증가율", "aliases": ["자산증가율"], "viewpoint": "GROWTH", "description": "기업의 총자산이 얼마나 증가하였는가를 나타내는 지표입니다.", "type": "TIME_COMPARISON", "base_account": "자산_합계", "comparison_type": "PRIOR_YEAR_EQUIV", "unit": "%" },
-      "매출채권회전율": { "official_name": "매출채권회전율", "aliases": ["채권회전율"], "viewpoint": "ACTIVITY", "description": "매출채권이 1년 동안 몇 번 현금으로 회수되는가를 나타내는 지표입니다.", "type": "CALCULATED", "formula_human": "매출액_합계 / 유동자산_매출채권", "components": ["매출액_합계", "유동자산_매출채권"], "unit": "회" }
+      "매출채권회전율": { "official_name": "매출채권회전율", "aliases": ["채권회전율"], "viewpoint": "ACTIVITY", "description": "매출채권이 1년 동안 몇 번 현금으로 회수되는가를 나타내는 지표입니다.", "type": "CALCULATED", "formula_human": "매출액_합계 / 유동자산_매출채권", "components": ["매출액_합계", "유동자산_매출채권"], "unit": "회" },
+      "매출총이익률": { "official_name": "매출총이익률", "aliases": ["매출이익률", "GPM"], "viewpoint": "PROFITABILITY", "description": "매출액 대비 매출총이익의 비율로 원가 관리 효율성을 나타냅니다.", "type": "CALCULATED", "formula_human": "(매출총이익 / 매출액_합계) * 100", "components": ["매출총이익", "매출액_합계"], "unit": "%" },
+      "순이익률": { "official_name": "순이익률", "aliases": ["당기순이익률", "NPM"], "viewpoint": "PROFITABILITY", "description": "매출액 대비 당기순이익의 비율로 최종 수익성을 나타냅니다.", "type": "CALCULATED", "formula_human": "(당기순이익 / 매출액_합계) * 100", "components": ["당기순이익", "매출액_합계"], "unit": "%" },
+      "유동비율": { "official_name": "유동비율", "aliases": ["Current Ratio"], "viewpoint": "STABILITY", "description": "단기 채무 상환 능력을 나타내는 지표입니다.", "type": "CALCULATED", "formula_human": "(유동자산_합계 / 부채_합계) * 100", "components": ["유동자산_합계", "부채_합계"], "unit": "%" },
+      "자산회전율": { "official_name": "자산회전율", "aliases": ["총자산회전율"], "viewpoint": "ACTIVITY", "description": "총자산이 1년 동안 몇 번 회전하는가를 나타내는 지표입니다.", "type": "CALCULATED", "formula_human": "매출액_합계 / 자산_합계", "components": ["매출액_합계", "자산_합계"], "unit": "회" },
+      "매출액증가율": { "official_name": "매출액 증가율", "aliases": ["매출증가율"], "viewpoint": "GROWTH", "description": "전년 대비 매출액 증가율을 나타내는 지표입니다.", "type": "TIME_COMPARISON", "base_account": "매출액_합계", "comparison_type": "PRIOR_YEAR_EQUIV", "unit": "%" }
     }
   },
   "segment_to_main_account_mapping": {
